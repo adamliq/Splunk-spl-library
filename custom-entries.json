@@ -44318,5 +44318,1522 @@
     "created": "2026-08-03",
     "modified": "2026-08-03",
     "copyCount": 0
+  },
+  {
+    "id": "custom-authored-zerologon-detection",
+    "title": "Zerologon Exploitation Indicators (CVE-2020-1472)",
+    "summary": "Surfaces Netlogon secure-channel warnings and suspicious machine account password resets consistent with a Zerologon attack.",
+    "purpose": "Zerologon (CVE-2020-1472) abuses a flaw in the Netlogon Remote Protocol to reset a domain controller's machine account password to an empty value, allowing an attacker to impersonate the DC. Windows logs a specific Netlogon warning when a client uses a vulnerable, unauthenticated secure channel connection; correlating that with an unexpected machine account password change on the same computer object is a strong Windows-native indicator worth investigating immediately.",
+    "spl": "(sourcetype=\"WinEventLog:Microsoft-Windows-Netlogon/Operational\" EventCode=5829)\nOR (sourcetype=\"WinEventLog:Security\" EventCode=4742 TargetUserName=\"*$\")\n| eval signal=case(EventCode=5829,\"netlogon_vulnerable_channel_allowed\",EventCode=4742,\"machine_account_password_changed\")\n| eval computer=coalesce(ComputerName, TargetUserName)\n| stats count values(signal) AS signals earliest(_time) AS first_seen latest(_time) AS last_seen BY computer, Caller_Computer_Name\n| where mvcount(signals)>0\n| convert ctime(first_seen) ctime(last_seen)\n| sort - last_seen",
+    "category": "Threat Detection",
+    "subcategory": "Privilege Escalation",
+    "useCases": [
+      "Threat Detection",
+      "Investigation"
+    ],
+    "commands": [
+      "eval",
+      "stats",
+      "convert",
+      "sort"
+    ],
+    "platforms": [
+      "Windows"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Windows Netlogon Operational Log",
+      "Windows Security Event Log"
+    ],
+    "indexes": [
+      "<windows_index>"
+    ],
+    "sourcetypes": [
+      "WinEventLog:Microsoft-Windows-Netlogon/Operational",
+      "WinEventLog:Security"
+    ],
+    "requiredFields": [
+      "EventCode"
+    ],
+    "optionalFields": [
+      "ComputerName",
+      "TargetUserName",
+      "Caller_Computer_Name"
+    ],
+    "outputFields": [
+      "computer",
+      "Caller_Computer_Name",
+      "count",
+      "signals",
+      "first_seen",
+      "last_seen"
+    ],
+    "cimDomains": [
+      "Authentication",
+      "Change"
+    ],
+    "dataModels": [],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "zerologon",
+      "cve-2020-1472",
+      "netlogon",
+      "domain-controller",
+      "privilege-escalation"
+    ],
+    "difficulty": "Advanced",
+    "searchType": "Detection",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "(sourcetype=\"WinEventLog:Microsoft-Windows-Netlogon/Operational\" EventCode=5829) OR (sourcetype=\"WinEventLog:Security\" EventCode=4742 TargetUserName=\"*$\")",
+        "description": "Pulls Netlogon EventID 5829 (a vulnerable, unauthenticated secure channel connection was allowed) and Security EventID 4742 (a computer account was changed) restricted to machine accounts (names ending in $)."
+      },
+      {
+        "stage": 2,
+        "spl": "| eval signal=case(EventCode=5829,\"netlogon_vulnerable_channel_allowed\",EventCode=4742,\"machine_account_password_changed\")",
+        "description": "Labels each event with a human-readable signal name for the two indicators being correlated."
+      },
+      {
+        "stage": 3,
+        "spl": "| stats count values(signal) AS signals earliest(_time) AS first_seen latest(_time) AS last_seen BY computer, Caller_Computer_Name",
+        "description": "Groups both signal types by the affected computer object and the calling host, so a computer showing both a vulnerable-channel warning and a password change stands out."
+      },
+      {
+        "stage": 4,
+        "spl": "| sort - last_seen",
+        "description": "Surfaces the most recent activity first for triage."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "computer": "DC01$",
+        "Caller_Computer_Name": "WKSTN-42",
+        "count": "3",
+        "signals": "netlogon_vulnerable_channel_allowed, machine_account_password_changed",
+        "first_seen": "2026-08-01 02:14:03",
+        "last_seen": "2026-08-01 02:14:07"
+      }
+    ],
+    "customisationNotes": [
+      "Requires the Netlogon debug/operational log to be collected — enable and forward Microsoft-Windows-Netlogon/Operational in addition to the standard Security log.",
+      "Replace <windows_index> with your deployed Windows index.",
+      "A single EventID 5829 without a following 4742 machine-account password change is lower urgency but still worth reviewing — legitimate legacy devices can trigger 5829 on patched, mitigated domain controllers."
+    ],
+    "performanceNotes": [
+      "Netlogon operational logs are typically low-volume compared to the Security log, so this search is inexpensive; still restrict the time range in production.",
+      "Consider tstats against an accelerated Authentication/Change data model if these sourcetypes are CIM-mapped in your environment."
+    ],
+    "prerequisites": [
+      "Netlogon debug logging (Microsoft-Windows-Netlogon/Operational) forwarded to Splunk",
+      "Domain controller Security event log forwarded to Splunk"
+    ],
+    "attack": {
+      "tactics": [
+        "Privilege Escalation",
+        "Defense Evasion"
+      ],
+      "techniques": [
+        "T1548",
+        "T1490"
+      ]
+    },
+    "detection": {
+      "analyticType": "TTP",
+      "riskObjects": [
+        "computer",
+        "Caller_Computer_Name"
+      ],
+      "falsePositives": [
+        "Legacy or misconfigured devices that legitimately fail Netlogon's stronger authentication can trigger EventID 5829 on a DC that has enforced mode enabled without impact.",
+        "Routine, scheduled machine account password rotation (default every 30 days) will show 4742 events unrelated to any attack — the correlation with 5829 in a short window is the key signal, not either event alone."
+      ],
+      "investigationSteps": [
+        "Confirm whether the domain controller has Netlogon enforcement mode enabled (patched and configured per Microsoft's guidance for CVE-2020-1472).",
+        "Check whether the machine account's password was reset to empty or an unexpected value immediately after the 5829 event.",
+        "Identify the source host (Caller_Computer_Name) and investigate what process initiated the Netlogon connection."
+      ],
+      "drilldowns": [
+        "Pull all authentication activity from the calling host in the surrounding 30 minutes.",
+        "Check whether the affected domain controller's machine account was used for any privileged operations shortly after the password change."
+      ]
+    },
+    "references": [
+      {
+        "label": "Microsoft Security Advisory",
+        "url": "Microsoft: Netlogon Elevation of Privilege Vulnerability (CVE-2020-1472)"
+      }
+    ],
+    "relatedEntryIds": [],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-authored-pass-the-hash-ntlm",
+    "title": "Possible Pass-the-Hash via NTLM Network Logon",
+    "summary": "Flags NTLM network logons (Type 3) using elevated or service-style accounts, a common Pass-the-Hash pattern.",
+    "purpose": "Pass-the-Hash (PtH) reuses a captured NTLM hash to authenticate without knowing the plaintext password, almost always appearing as an NTLM-authenticated network logon (Logon Type 3) rather than an interactive one. This search looks for NTLM network logons by accounts that are unlikely to legitimately authenticate that way — administrative or service accounts — as a starting point for investigation.",
+    "spl": "index=<windows_index> sourcetype=WinEventLog:Security EventCode=4624 Logon_Type=3 Authentication_Package=NTLM\n| eval user=coalesce(TargetUserName, user)\n| eval src=coalesce(IpAddress, src)\n| where NOT match(user, \"(?i)\\$$\") AND (match(user, \"(?i)admin\") OR match(user, \"(?i)svc\") OR match(user, \"(?i)service\"))\n| stats count min(_time) AS firstTime max(_time) AS lastTime values(src) AS sourceAddresses values(ComputerName) AS targetHosts BY user\n| convert ctime(firstTime) ctime(lastTime)\n| sort - count",
+    "category": "Threat Detection",
+    "subcategory": "Lateral Movement",
+    "useCases": [
+      "Threat Detection",
+      "Investigation"
+    ],
+    "commands": [
+      "eval",
+      "where",
+      "stats",
+      "convert",
+      "sort"
+    ],
+    "platforms": [
+      "Windows"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Windows Security Event Log"
+    ],
+    "indexes": [
+      "<windows_index>"
+    ],
+    "sourcetypes": [
+      "WinEventLog:Security"
+    ],
+    "requiredFields": [
+      "EventCode",
+      "Logon_Type",
+      "Authentication_Package",
+      "TargetUserName"
+    ],
+    "optionalFields": [
+      "IpAddress",
+      "ComputerName"
+    ],
+    "outputFields": [
+      "user",
+      "count",
+      "firstTime",
+      "lastTime",
+      "sourceAddresses",
+      "targetHosts"
+    ],
+    "cimDomains": [
+      "Authentication"
+    ],
+    "dataModels": [
+      "Authentication"
+    ],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "pass-the-hash",
+      "ntlm",
+      "lateral-movement",
+      "credential-access"
+    ],
+    "difficulty": "Intermediate",
+    "searchType": "Detection",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<windows_index> sourcetype=WinEventLog:Security EventCode=4624 Logon_Type=3 Authentication_Package=NTLM",
+        "description": "Retrieves successful network logons (Type 3) authenticated via NTLM rather than Kerberos."
+      },
+      {
+        "stage": 2,
+        "spl": "| eval user=coalesce(TargetUserName, user) | eval src=coalesce(IpAddress, src)",
+        "description": "Normalizes field names across slightly different Windows TA field extractions."
+      },
+      {
+        "stage": 3,
+        "spl": "| where NOT match(user, \"(?i)\\$$\") AND (match(user, \"(?i)admin\") OR match(user, \"(?i)svc\") OR match(user, \"(?i)service\"))",
+        "description": "Excludes machine accounts and narrows to account names that look administrative or service-related — adjust this pattern to match your naming convention."
+      },
+      {
+        "stage": 4,
+        "spl": "| stats count min(_time) AS firstTime max(_time) AS lastTime values(src) AS sourceAddresses values(ComputerName) AS targetHosts BY user",
+        "description": "Summarizes how often, from where, and to which hosts each matching account authenticated via NTLM."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "user": "svc-backup",
+        "count": "14",
+        "firstTime": "2026-08-02 09:00:11",
+        "lastTime": "2026-08-02 09:41:52",
+        "sourceAddresses": "10.1.2.30, 10.1.2.31",
+        "targetHosts": "FILESRV01, FILESRV02"
+      }
+    ],
+    "customisationNotes": [
+      "Replace <windows_index> with your Windows index and adjust the account-name pattern to match your organization's admin/service account naming convention.",
+      "NTLM network logons are legitimate for many service accounts — baseline expected source hosts before treating a hit as high severity.",
+      "If Kerberos is fully enforced in your environment, any NTLM network logon by a privileged account is worth a closer look regardless of the naming pattern."
+    ],
+    "performanceNotes": [
+      "This is a raw Security-log search; if the Authentication data model is accelerated in your environment, an equivalent tstats search restricted to Logon_Type=3 and Authentication_Package=NTLM will run significantly faster over long time ranges."
+    ],
+    "prerequisites": [],
+    "attack": {
+      "tactics": [
+        "Lateral Movement",
+        "Credential Access"
+      ],
+      "techniques": [
+        "T1550.002"
+      ]
+    },
+    "detection": {
+      "analyticType": "Behavioural",
+      "riskObjects": [
+        "user",
+        "src"
+      ],
+      "falsePositives": [
+        "Legitimate service accounts that are configured to use NTLM (some legacy applications and appliances only support NTLM) will appear here routinely — baseline them.",
+        "Cross-domain or cross-forest authentication without a trust that supports Kerberos can force NTLM even for normal user activity."
+      ],
+      "investigationSteps": [
+        "Check whether the source host is one this account is expected to authenticate from.",
+        "Determine whether a legitimate interactive session for the same account exists around the same time, or whether this is the only authentication activity — PtH rarely involves a prior interactive logon on the source host.",
+        "Review what the account did on the target host immediately after authenticating."
+      ],
+      "drilldowns": [
+        "Pull all logon activity (all types) for this account across the full environment in the surrounding hour.",
+        "Search for process creation on the source host that could indicate a credential-dumping tool."
+      ]
+    },
+    "references": [
+      {
+        "label": "MITRE ATT&CK",
+        "url": "MITRE ATT&CK T1550.002 — Use Alternate Authentication Material: Pass the Hash"
+      }
+    ],
+    "relatedEntryIds": [],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-authored-password-typed-as-username",
+    "title": "Possible Passwords Typed Into the Username Field",
+    "summary": "Finds failed logon attempts where the attempted username looks like a password, suggesting a user mistyped credentials into the wrong field.",
+    "purpose": "Users occasionally type their password into the username field by mistake — for example on a screen-unlock prompt after a timeout. Because Windows logs the failed logon attempt including the invalid username, this can inadvertently leak a plaintext (or near-plaintext) password into the Security event log. This search flags failed logons whose target username looks unusually complex for a real account name, so the affected account's password can be rotated and the log entries handled per your data-handling policy.",
+    "spl": "index=<windows_index> sourcetype=WinEventLog:Security EventCode=4625\n| eval user=TargetUserName\n| eval looks_like_password=if(len(user)>=8 AND match(user,\"[A-Z]\") AND match(user,\"[a-z]\") AND match(user,\"[0-9]\") AND match(user,\"[^A-Za-z0-9]\"),1,0)\n| where looks_like_password=1\n| stats count min(_time) AS firstTime max(_time) AS lastTime values(src) AS sourceAddresses BY ComputerName\n| convert ctime(firstTime) ctime(lastTime)\n| sort - count",
+    "category": "Threat Detection",
+    "subcategory": "Credential Exposure",
+    "useCases": [
+      "Investigation",
+      "Data Quality"
+    ],
+    "commands": [
+      "eval",
+      "where",
+      "stats",
+      "convert",
+      "sort"
+    ],
+    "platforms": [
+      "Windows"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Windows Security Event Log"
+    ],
+    "indexes": [
+      "<windows_index>"
+    ],
+    "sourcetypes": [
+      "WinEventLog:Security"
+    ],
+    "requiredFields": [
+      "EventCode",
+      "TargetUserName"
+    ],
+    "optionalFields": [
+      "src",
+      "ComputerName"
+    ],
+    "outputFields": [
+      "ComputerName",
+      "count",
+      "firstTime",
+      "lastTime",
+      "sourceAddresses"
+    ],
+    "cimDomains": [
+      "Authentication"
+    ],
+    "dataModels": [],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "credential-exposure",
+      "data-quality",
+      "logging-hygiene"
+    ],
+    "difficulty": "Intermediate",
+    "searchType": "Investigation",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<windows_index> sourcetype=WinEventLog:Security EventCode=4625",
+        "description": "Retrieves failed logon events, which record the attempted (and rejected) username."
+      },
+      {
+        "stage": 2,
+        "spl": "| eval looks_like_password=if(len(user)>=8 AND match(user,\"[A-Z]\") AND match(user,\"[a-z]\") AND match(user,\"[0-9]\") AND match(user,\"[^A-Za-z0-9]\"),1,0)",
+        "description": "Applies a simple complexity heuristic — length plus mixed case, digits, and a symbol — to flag usernames that look like they were actually a password."
+      },
+      {
+        "stage": 3,
+        "spl": "| where looks_like_password=1",
+        "description": "Keeps only the events matching that heuristic."
+      },
+      {
+        "stage": 4,
+        "spl": "| stats count min(_time) AS firstTime max(_time) AS lastTime values(src) AS sourceAddresses BY ComputerName",
+        "description": "Summarizes affected hosts, since the specific leaked value itself should not be routinely displayed on a dashboard."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "ComputerName": "WKSTN-17",
+        "count": "1",
+        "firstTime": "2026-08-01 08:03:44",
+        "lastTime": "2026-08-01 08:03:44",
+        "sourceAddresses": "10.1.4.9"
+      }
+    ],
+    "customisationNotes": [
+      "Replace <windows_index> with your Windows index.",
+      "This is a heuristic, not a guarantee — tune the complexity thresholds to your organization's real password policy to reduce false positives.",
+      "Handle any matching raw events carefully: they may contain a real, currently-valid password. Restrict access to the underlying raw search and rotate the affected account's credentials as a precaution.",
+      "Consider excluding this field from the table/output entirely in shared dashboards, showing only the host and count as done here."
+    ],
+    "performanceNotes": [
+      "Low-volume, field-level regex match on already-filtered EventCode=4625 events — inexpensive at normal failed-logon rates."
+    ],
+    "prerequisites": [],
+    "attack": {
+      "tactics": [
+        "Credential Access"
+      ],
+      "techniques": []
+    },
+    "detection": {
+      "analyticType": "Heuristic",
+      "riskObjects": [
+        "ComputerName"
+      ],
+      "falsePositives": [
+        "Some organizations have genuinely complex service account names that can match the heuristic — review and adjust thresholds.",
+        "Automated systems retrying stale cached credentials after a password rotation can also produce complex-looking failed usernames."
+      ],
+      "investigationSteps": [
+        "Identify the real account this likely belongs to (often the same user's valid account authenticates successfully shortly after from the same host).",
+        "Treat the exposed value as a compromised credential and force a password reset for the affected account.",
+        "Confirm log retention and access controls limit who can view the raw event containing the leaked value."
+      ],
+      "drilldowns": [
+        "Review the account's authentication history for the following successful logon to confirm identity."
+      ]
+    },
+    "references": [],
+    "relatedEntryIds": [],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-authored-account-created-deleted-24h",
+    "title": "User Account Created and Deleted Within 24 Hours",
+    "summary": "Correlates account creation (4720) and deletion (4726) events to flag accounts that existed for less than a day.",
+    "purpose": "A user account that is created and deleted again within a very short window can indicate an attacker establishing and then covering up a foothold account, or a misconfigured provisioning/deprovisioning automation. This search pairs each account's creation and deletion events and flags short-lived accounts for review.",
+    "spl": "index=<windows_index> sourcetype=WinEventLog:Security (EventCode=4720 OR EventCode=4726)\n| eval action=if(EventCode=4720,\"created\",\"deleted\")\n| eval user=TargetUserName\n| stats earliest(eval(if(action=\"created\",_time,null()))) AS created_time latest(eval(if(action=\"deleted\",_time,null()))) AS deleted_time values(action) AS actions BY user\n| where isnotnull(created_time) AND isnotnull(deleted_time)\n| eval lifespan_hours=round((deleted_time-created_time)/3600,2)\n| where lifespan_hours<24\n| convert ctime(created_time) ctime(deleted_time)\n| sort lifespan_hours",
+    "category": "Threat Detection",
+    "subcategory": "Persistence",
+    "useCases": [
+      "Threat Detection",
+      "Investigation"
+    ],
+    "commands": [
+      "eval",
+      "stats",
+      "where",
+      "convert",
+      "sort"
+    ],
+    "platforms": [
+      "Windows"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Windows Security Event Log"
+    ],
+    "indexes": [
+      "<windows_index>"
+    ],
+    "sourcetypes": [
+      "WinEventLog:Security"
+    ],
+    "requiredFields": [
+      "EventCode",
+      "TargetUserName"
+    ],
+    "optionalFields": [],
+    "outputFields": [
+      "user",
+      "created_time",
+      "deleted_time",
+      "lifespan_hours",
+      "actions"
+    ],
+    "cimDomains": [
+      "Change"
+    ],
+    "dataModels": [
+      "Change"
+    ],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "account-lifecycle",
+      "persistence",
+      "anti-forensics"
+    ],
+    "difficulty": "Advanced",
+    "searchType": "Detection",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<windows_index> sourcetype=WinEventLog:Security (EventCode=4720 OR EventCode=4726)",
+        "description": "Retrieves account creation (4720) and account deletion (4726) events."
+      },
+      {
+        "stage": 2,
+        "spl": "| eval action=if(EventCode=4720,\"created\",\"deleted\") | eval user=TargetUserName",
+        "description": "Labels each event and normalizes the username field."
+      },
+      {
+        "stage": 3,
+        "spl": "| stats earliest(eval(if(action=\"created\",_time,null()))) AS created_time latest(eval(if(action=\"deleted\",_time,null()))) AS deleted_time values(action) AS actions BY user",
+        "description": "Pairs each account's creation and deletion timestamps by username."
+      },
+      {
+        "stage": 4,
+        "spl": "| where isnotnull(created_time) AND isnotnull(deleted_time) | eval lifespan_hours=round((deleted_time-created_time)/3600,2) | where lifespan_hours<24",
+        "description": "Keeps only accounts where both events were captured in the search window and the lifespan was under 24 hours."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "user": "svc-temp01",
+        "created_time": "2026-08-01 22:10:03",
+        "deleted_time": "2026-08-02 03:44:19",
+        "lifespan_hours": "5.57",
+        "actions": "created, deleted"
+      }
+    ],
+    "customisationNotes": [
+      "Replace <windows_index> and adjust the 24-hour threshold to match your organization's normal provisioning practices.",
+      "Requires both the creation and deletion event to fall inside the search's time range — widen earliest/latest if accounts might be created and deleted further apart, or run this daily against a longer lookback."
+    ],
+    "performanceNotes": [
+      "The nested eval-inside-stats pattern is fine at normal account-management volumes; for very high-volume environments consider pre-filtering with a longer base search before the stats stage."
+    ],
+    "prerequisites": [],
+    "attack": {
+      "tactics": [
+        "Persistence",
+        "Defense Evasion"
+      ],
+      "techniques": [
+        "T1136.001",
+        "T1531"
+      ]
+    },
+    "detection": {
+      "analyticType": "Behavioural",
+      "riskObjects": [
+        "user"
+      ],
+      "falsePositives": [
+        "Legitimate short-lived contractor, test, or temporary accounts created by IT automation will also match — maintain an allowlist of expected temporary-account naming patterns."
+      ],
+      "investigationSteps": [
+        "Identify who created and who deleted the account (Subject fields on the 4720/4726 events) — a mismatch is worth extra scrutiny.",
+        "Review what the account did during its short lifespan: group memberships granted, resources accessed, processes run."
+      ],
+      "drilldowns": [
+        "Pull a full activity timeline for the account between its creation and deletion timestamps."
+      ]
+    },
+    "references": [],
+    "relatedEntryIds": [],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-authored-file-deletion-attempts",
+    "title": "File Deletion Events from Windows Object Access Auditing",
+    "summary": "Reports file deletion activity captured by Windows object access auditing (EventCode 4660/4663).",
+    "purpose": "With object access auditing enabled on sensitive folders, Windows logs a handle-closed deletion event (4660) alongside the access-request event (4663) that shows the account, process, and object involved. This search surfaces deletion activity for investigation of data destruction, anti-forensic behaviour, or accidental deletion.",
+    "spl": "index=<windows_index> sourcetype=WinEventLog:Security EventCode=4663 Accesses=\"*DELETE*\"\n| eval user=coalesce(SubjectUserName, user)\n| eval file=coalesce(ObjectName, object_file_path)\n| stats count values(file) AS files_deleted BY user, ComputerName, ProcessName\n| sort - count",
+    "category": "Threat Detection",
+    "subcategory": "Impact",
+    "useCases": [
+      "Investigation",
+      "Threat Detection"
+    ],
+    "commands": [
+      "eval",
+      "stats",
+      "sort"
+    ],
+    "platforms": [
+      "Windows"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Windows Security Event Log"
+    ],
+    "indexes": [
+      "<windows_index>"
+    ],
+    "sourcetypes": [
+      "WinEventLog:Security"
+    ],
+    "requiredFields": [
+      "EventCode",
+      "Accesses"
+    ],
+    "optionalFields": [
+      "SubjectUserName",
+      "ObjectName",
+      "ProcessName",
+      "ComputerName"
+    ],
+    "outputFields": [
+      "user",
+      "ComputerName",
+      "ProcessName",
+      "count",
+      "files_deleted"
+    ],
+    "cimDomains": [
+      "Endpoint"
+    ],
+    "dataModels": [],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "file-deletion",
+      "object-access-auditing",
+      "data-destruction"
+    ],
+    "difficulty": "Intermediate",
+    "searchType": "Investigation",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<windows_index> sourcetype=WinEventLog:Security EventCode=4663 Accesses=\"*DELETE*\"",
+        "description": "Retrieves object access events where the access mask includes a delete request."
+      },
+      {
+        "stage": 2,
+        "spl": "| eval user=coalesce(SubjectUserName, user) | eval file=coalesce(ObjectName, object_file_path)",
+        "description": "Normalizes the acting user and target file path fields."
+      },
+      {
+        "stage": 3,
+        "spl": "| stats count values(file) AS files_deleted BY user, ComputerName, ProcessName",
+        "description": "Summarizes deletion activity by user, host, and the process that performed the deletion."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "user": "jsmith",
+        "ComputerName": "FILESRV01",
+        "ProcessName": "C:\\Windows\\explorer.exe",
+        "count": "3",
+        "files_deleted": "\\\\FILESRV01\\Finance\\Q3_budget.xlsx"
+      }
+    ],
+    "customisationNotes": [
+      "Requires a SACL (System Access Control List) configured on the monitored folders and object access auditing enabled via Group Policy — this search returns nothing without that in place.",
+      "Replace <windows_index> with your Windows index.",
+      "Restrict the base search to specific paths of interest (e.g. finance shares, source code repositories) to keep volume manageable."
+    ],
+    "performanceNotes": [
+      "Object access auditing can be extremely high-volume if enabled broadly — scope auditing (and this search) to specific sensitive directories rather than entire volumes."
+    ],
+    "prerequisites": [
+      "Object access (SACL) auditing enabled on the monitored files/folders",
+      "Windows Security auditing policy configured to log object access"
+    ],
+    "attack": {
+      "tactics": [
+        "Impact"
+      ],
+      "techniques": [
+        "T1485"
+      ]
+    },
+    "detection": {
+      "analyticType": "Behavioural",
+      "riskObjects": [
+        "user",
+        "ComputerName"
+      ],
+      "falsePositives": [
+        "Routine file cleanup, temp-file deletion by applications, and normal user housekeeping will appear here — scope auditing to genuinely sensitive locations to reduce noise."
+      ],
+      "investigationSteps": [
+        "Confirm whether the deletion was expected (e.g. part of a documented cleanup process) or unexpected.",
+        "Check whether the deleted files can be recovered from backup or shadow copies.",
+        "Review the acting account's other activity around the same time for signs of broader malicious behaviour."
+      ],
+      "drilldowns": [
+        "Search for other object access events (read, write, rename) by the same user and process shortly before the deletion."
+      ]
+    },
+    "references": [],
+    "relatedEntryIds": [],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-authored-successful-file-access",
+    "title": "Successful Sensitive File Access via Object Access Auditing",
+    "summary": "Reports successful read/write access to audited files and folders, for reviewing who accessed sensitive data.",
+    "purpose": "When object access (SACL) auditing is enabled on sensitive files or shares, Windows records every successful access along with the requesting account and the specific rights granted. This search summarizes that activity so file access to a protected location can be reviewed for authorized use.",
+    "spl": "index=<windows_index> sourcetype=WinEventLog:Security EventCode=4663\n| eval user=coalesce(SubjectUserName, user)\n| eval file=coalesce(ObjectName, object_file_path)\n| eval access_type=case(match(Accesses,\"WriteData\"),\"write\",match(Accesses,\"ReadData\"),\"read\",true(),\"other\")\n| stats count BY user, file, access_type, ComputerName\n| sort - count",
+    "category": "Threat Detection",
+    "subcategory": "Data Access",
+    "useCases": [
+      "Investigation",
+      "Reporting"
+    ],
+    "commands": [
+      "eval",
+      "stats",
+      "sort"
+    ],
+    "platforms": [
+      "Windows"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Windows Security Event Log"
+    ],
+    "indexes": [
+      "<windows_index>"
+    ],
+    "sourcetypes": [
+      "WinEventLog:Security"
+    ],
+    "requiredFields": [
+      "EventCode"
+    ],
+    "optionalFields": [
+      "SubjectUserName",
+      "ObjectName",
+      "Accesses",
+      "ComputerName"
+    ],
+    "outputFields": [
+      "user",
+      "file",
+      "access_type",
+      "ComputerName",
+      "count"
+    ],
+    "cimDomains": [
+      "Endpoint"
+    ],
+    "dataModels": [],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "file-access",
+      "object-access-auditing",
+      "data-access-review"
+    ],
+    "difficulty": "Intermediate",
+    "searchType": "Investigation",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<windows_index> sourcetype=WinEventLog:Security EventCode=4663",
+        "description": "Retrieves object access attempts where auditing is enabled."
+      },
+      {
+        "stage": 2,
+        "spl": "| eval user=coalesce(SubjectUserName, user) | eval file=coalesce(ObjectName, object_file_path)",
+        "description": "Normalizes the acting user and object path fields."
+      },
+      {
+        "stage": 3,
+        "spl": "| eval access_type=case(match(Accesses,\"WriteData\"),\"write\",match(Accesses,\"ReadData\"),\"read\",true(),\"other\")",
+        "description": "Classifies the access mask into a simplified read/write/other category."
+      },
+      {
+        "stage": 4,
+        "spl": "| stats count BY user, file, access_type, ComputerName",
+        "description": "Summarizes access counts by user, file, access type, and host."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "user": "jsmith",
+        "file": "\\\\FILESRV01\\HR\\salaries.xlsx",
+        "access_type": "read",
+        "ComputerName": "FILESRV01",
+        "count": "2"
+      }
+    ],
+    "customisationNotes": [
+      "Requires object access (SACL) auditing enabled on the target files/folders; without it this search returns nothing.",
+      "Replace <windows_index> and scope the base search to specific paths to control volume."
+    ],
+    "performanceNotes": [
+      "Object access auditing volume can be very high if enabled broadly — audit only the specific sensitive paths you need to monitor."
+    ],
+    "prerequisites": [
+      "Object access (SACL) auditing enabled on the monitored files/folders"
+    ],
+    "attack": {
+      "tactics": [
+        "Collection"
+      ],
+      "techniques": [
+        "T1005"
+      ]
+    },
+    "detection": {
+      "analyticType": "Reporting",
+      "riskObjects": [
+        "user"
+      ],
+      "falsePositives": [
+        "Any normal, authorized access to the audited files will appear here — this is a reporting/review search, not itself a high-fidelity alert."
+      ],
+      "investigationSteps": [
+        "Confirm the accessing account had a legitimate business reason to open the file.",
+        "Check for unusual access volume or access outside normal working hours for the account."
+      ],
+      "drilldowns": [
+        "Compare against a list of users authorized for the specific file share or folder."
+      ]
+    },
+    "references": [],
+    "relatedEntryIds": [],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-authored-failed-auth-nonexistent-account",
+    "title": "Failed Authentication Against a Non-Existent Account",
+    "summary": "Flags failed logons with sub-status code 0xC0000064 (username does not exist) — a common account-enumeration signal.",
+    "purpose": "Windows differentiates a failed logon caused by a bad password from one caused by an account that simply does not exist (sub-status 0xC0000064). A pattern of these failures, especially from a single source trying many distinct usernames, is a strong indicator of account enumeration or a username-guessing brute-force attack.",
+    "spl": "index=<windows_index> sourcetype=WinEventLog:Security EventCode=4625 Status=0xC000006D Sub_Status=0xC0000064\n| eval user=TargetUserName\n| stats count dc(user) AS distinct_usernames_tried values(user) AS usernames_tried BY src\n| where distinct_usernames_tried>5\n| sort - distinct_usernames_tried",
+    "category": "Threat Detection",
+    "subcategory": "Reconnaissance",
+    "useCases": [
+      "Threat Detection",
+      "Investigation"
+    ],
+    "commands": [
+      "eval",
+      "stats",
+      "where",
+      "sort"
+    ],
+    "platforms": [
+      "Windows"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Windows Security Event Log"
+    ],
+    "indexes": [
+      "<windows_index>"
+    ],
+    "sourcetypes": [
+      "WinEventLog:Security"
+    ],
+    "requiredFields": [
+      "EventCode",
+      "Status",
+      "Sub_Status",
+      "TargetUserName",
+      "src"
+    ],
+    "optionalFields": [],
+    "outputFields": [
+      "src",
+      "count",
+      "distinct_usernames_tried",
+      "usernames_tried"
+    ],
+    "cimDomains": [
+      "Authentication"
+    ],
+    "dataModels": [
+      "Authentication"
+    ],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "account-enumeration",
+      "brute-force",
+      "reconnaissance"
+    ],
+    "difficulty": "Beginner",
+    "searchType": "Detection",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<windows_index> sourcetype=WinEventLog:Security EventCode=4625 Status=0xC000006D Sub_Status=0xC0000064",
+        "description": "Retrieves failed logons specifically flagged with the sub-status code meaning the target username does not exist."
+      },
+      {
+        "stage": 2,
+        "spl": "| stats count dc(user) AS distinct_usernames_tried values(user) AS usernames_tried BY src",
+        "description": "Counts, per source, how many distinct non-existent usernames were attempted."
+      },
+      {
+        "stage": 3,
+        "spl": "| where distinct_usernames_tried>5",
+        "description": "Filters to sources trying more than five distinct invalid usernames — adjust to your environment's baseline."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "src": "203.0.113.44",
+        "count": "212",
+        "distinct_usernames_tried": "198",
+        "usernames_tried": "admin, administrator, root, test, jsmith1 …"
+      }
+    ],
+    "customisationNotes": [
+      "Replace <windows_index> with your Windows index.",
+      "Adjust the distinct_usernames_tried threshold based on normal noise in your environment (typos, stale scripts) versus genuine enumeration."
+    ],
+    "performanceNotes": [
+      "Inexpensive: filters on indexed EventCode/Status/Sub_Status fields before aggregation."
+    ],
+    "prerequisites": [],
+    "attack": {
+      "tactics": [
+        "Reconnaissance",
+        "Credential Access"
+      ],
+      "techniques": [
+        "T1589.002",
+        "T1110.003"
+      ]
+    },
+    "detection": {
+      "analyticType": "Threshold",
+      "riskObjects": [
+        "src"
+      ],
+      "falsePositives": [
+        "Misconfigured applications or scripts using stale/incorrect service account names can generate repeated 0xC0000064 failures without any malicious intent.",
+        "Password managers or SSO agents retrying old cached usernames after an account rename can also trigger this."
+      ],
+      "investigationSteps": [
+        "Determine whether the source is internal or external — external sources hitting this pattern warrant immediate blocking consideration.",
+        "Check whether any of the attempted usernames later succeeded from the same or a related source."
+      ],
+      "drilldowns": [
+        "Search for any successful logons from the same source address in the following 24 hours."
+      ]
+    },
+    "references": [],
+    "relatedEntryIds": [],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-authored-weekend-user-activity",
+    "title": "User Logon Activity Outside Business Days",
+    "summary": "Reports successful Windows logons occurring on Saturday or Sunday, useful for spotting unexpected weekend account use.",
+    "purpose": "Weekend authentication activity by accounts that normally only work weekdays can indicate compromised credentials being used outside a legitimate schedule, or can simply reflect on-call/overtime work. This search reports weekend logons by user for review against expected schedules.",
+    "spl": "index=<windows_index> sourcetype=WinEventLog:Security EventCode=4624 Logon_Type=2 OR Logon_Type=10\n| eval user=TargetUserName\n| eval day_of_week=strftime(_time,\"%A\")\n| where day_of_week=\"Saturday\" OR day_of_week=\"Sunday\"\n| stats count values(day_of_week) AS days values(ComputerName) AS hosts earliest(_time) AS first_seen latest(_time) AS last_seen BY user\n| convert ctime(first_seen) ctime(last_seen)\n| sort - count",
+    "category": "Threat Detection",
+    "subcategory": "Anomalous Access",
+    "useCases": [
+      "Investigation",
+      "Reporting"
+    ],
+    "commands": [
+      "eval",
+      "where",
+      "stats",
+      "convert",
+      "sort"
+    ],
+    "platforms": [
+      "Windows"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Windows Security Event Log"
+    ],
+    "indexes": [
+      "<windows_index>"
+    ],
+    "sourcetypes": [
+      "WinEventLog:Security"
+    ],
+    "requiredFields": [
+      "EventCode",
+      "Logon_Type",
+      "TargetUserName"
+    ],
+    "optionalFields": [
+      "ComputerName"
+    ],
+    "outputFields": [
+      "user",
+      "count",
+      "days",
+      "hosts",
+      "first_seen",
+      "last_seen"
+    ],
+    "cimDomains": [
+      "Authentication"
+    ],
+    "dataModels": [],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "off-hours",
+      "anomalous-access",
+      "weekend-activity"
+    ],
+    "difficulty": "Beginner",
+    "searchType": "Reporting",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<windows_index> sourcetype=WinEventLog:Security EventCode=4624 Logon_Type=2 OR Logon_Type=10",
+        "description": "Retrieves successful interactive (Type 2) and remote interactive/RDP (Type 10) logons."
+      },
+      {
+        "stage": 2,
+        "spl": "| eval day_of_week=strftime(_time,\"%A\")",
+        "description": "Derives the day of week from the event timestamp."
+      },
+      {
+        "stage": 3,
+        "spl": "| where day_of_week=\"Saturday\" OR day_of_week=\"Sunday\"",
+        "description": "Keeps only weekend events."
+      },
+      {
+        "stage": 4,
+        "spl": "| stats count values(day_of_week) AS days values(ComputerName) AS hosts earliest(_time) AS first_seen latest(_time) AS last_seen BY user",
+        "description": "Summarizes weekend logon activity per user."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "user": "mjones",
+        "count": "6",
+        "days": "Saturday, Sunday",
+        "hosts": "WKSTN-08",
+        "first_seen": "2026-08-01 10:12:00",
+        "last_seen": "2026-08-02 14:30:00"
+      }
+    ],
+    "customisationNotes": [
+      "Replace <windows_index> with your Windows index.",
+      "This reports on the Splunk search head's configured timezone by default — set an explicit timezone conversion if your DCs and analysts span multiple timezones.",
+      "Cross-reference against a list of on-call or scheduled weekend-shift staff before treating results as anomalous."
+    ],
+    "performanceNotes": [
+      "Inexpensive at typical logon volumes; restrict Logon_Type as needed to reduce noise from service/network logons that aren't meaningful for this report."
+    ],
+    "prerequisites": [],
+    "attack": {
+      "tactics": [],
+      "techniques": []
+    },
+    "detection": {
+      "analyticType": "Behavioural",
+      "riskObjects": [
+        "user"
+      ],
+      "falsePositives": [
+        "Legitimate on-call, overtime, or scheduled weekend maintenance work will regularly appear here — this is a review report, not a high-fidelity alert on its own."
+      ],
+      "investigationSteps": [
+        "Check whether the user or their manager can confirm planned weekend work.",
+        "Review what the account did during the session for anything inconsistent with routine maintenance."
+      ],
+      "drilldowns": [
+        "Pull the full session activity timeline for the flagged user during the weekend window."
+      ]
+    },
+    "references": [],
+    "relatedEntryIds": [],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-authored-privilege-grant-revoke-duration",
+    "title": "Time Between Privileged Group Membership Granted and Revoked",
+    "summary": "Pairs privileged group addition (4728/4732/4756) and removal (4729/4733/4757) events to measure how long an account held elevated access.",
+    "purpose": "Temporary elevation to a privileged group (for example during a change window) should be time-bound. This search pairs each account's addition-to and removal-from a privileged group to measure how long elevated access was actually held, surfacing accounts that kept privileged membership far longer than expected — or that were never removed at all within the search window.",
+    "spl": "index=<windows_index> sourcetype=WinEventLog:Security (EventCode=4728 OR EventCode=4729 OR EventCode=4732 OR EventCode=4733 OR EventCode=4756 OR EventCode=4757)\n| eval action=if(EventCode IN (4728,4732,4756),\"granted\",\"revoked\")\n| eval user=MemberName\n| eval group=TargetUserName\n| stats earliest(eval(if(action=\"granted\",_time,null()))) AS granted_time latest(eval(if(action=\"revoked\",_time,null()))) AS revoked_time BY user, group\n| eval held_hours=if(isnotnull(granted_time) AND isnotnull(revoked_time),round((revoked_time-granted_time)/3600,2),null())\n| eval status=case(isnotnull(held_hours),\"revoked\",isnull(revoked_time) AND isnotnull(granted_time),\"still elevated\",true(),\"unknown\")\n| convert ctime(granted_time) ctime(revoked_time)\n| sort - held_hours",
+    "category": "Threat Detection",
+    "subcategory": "Privilege Escalation",
+    "useCases": [
+      "Investigation",
+      "Threat Detection"
+    ],
+    "commands": [
+      "eval",
+      "stats",
+      "convert",
+      "sort"
+    ],
+    "platforms": [
+      "Windows"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Windows Security Event Log"
+    ],
+    "indexes": [
+      "<windows_index>"
+    ],
+    "sourcetypes": [
+      "WinEventLog:Security"
+    ],
+    "requiredFields": [
+      "EventCode",
+      "MemberName",
+      "TargetUserName"
+    ],
+    "optionalFields": [],
+    "outputFields": [
+      "user",
+      "group",
+      "granted_time",
+      "revoked_time",
+      "held_hours",
+      "status"
+    ],
+    "cimDomains": [
+      "Change"
+    ],
+    "dataModels": [
+      "Change"
+    ],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "privileged-access",
+      "group-membership",
+      "access-review"
+    ],
+    "difficulty": "Advanced",
+    "searchType": "Investigation",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<windows_index> sourcetype=WinEventLog:Security (EventCode=4728 OR EventCode=4729 OR EventCode=4732 OR EventCode=4733 OR EventCode=4756 OR EventCode=4757)",
+        "description": "Retrieves member-added and member-removed events for global, local, and universal security groups."
+      },
+      {
+        "stage": 2,
+        "spl": "| eval action=if(EventCode IN (4728,4732,4756),\"granted\",\"revoked\")",
+        "description": "Labels each event as a grant or a revoke based on its event code."
+      },
+      {
+        "stage": 3,
+        "spl": "| stats earliest(eval(if(action=\"granted\",_time,null()))) AS granted_time latest(eval(if(action=\"revoked\",_time,null()))) AS revoked_time BY user, group",
+        "description": "Pairs the earliest grant with the latest revoke for each user/group combination."
+      },
+      {
+        "stage": 4,
+        "spl": "| eval held_hours=if(isnotnull(granted_time) AND isnotnull(revoked_time),round((revoked_time-granted_time)/3600,2),null())",
+        "description": "Calculates how long the membership was held, in hours, when both events are present."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "user": "jsmith",
+        "group": "Domain Admins",
+        "granted_time": "2026-07-28 09:00:00",
+        "revoked_time": "2026-07-28 17:30:00",
+        "held_hours": "8.5",
+        "status": "revoked"
+      }
+    ],
+    "customisationNotes": [
+      "Replace <windows_index> and confirm the group-management event codes match the group types (global/local/universal) used in your domain.",
+      "Widen the search's time range if grants and revokes for the same membership often fall further apart than a single day.",
+      "Rows with status=\"still elevated\" and no revoked_time mean no removal event was found in the search window — investigate whether that access is still needed."
+    ],
+    "performanceNotes": [
+      "Group management events are typically low volume; this search is inexpensive even over multi-week ranges."
+    ],
+    "prerequisites": [],
+    "attack": {
+      "tactics": [
+        "Privilege Escalation"
+      ],
+      "techniques": [
+        "T1098.007",
+        "T1078.002"
+      ]
+    },
+    "detection": {
+      "analyticType": "Behavioural",
+      "riskObjects": [
+        "user",
+        "group"
+      ],
+      "falsePositives": [
+        "Legitimate long-running privileged roles (e.g. a dedicated admin account) will show large held_hours values or no revoke at all — cross-reference against your access-review policy rather than treating every long duration as an incident."
+      ],
+      "investigationSteps": [
+        "Confirm the elevation was tied to an approved change ticket or access request.",
+        "For accounts still elevated, confirm whether that access is still required."
+      ],
+      "drilldowns": [
+        "Review what privileged actions the account performed while it held elevated membership."
+      ]
+    },
+    "references": [],
+    "relatedEntryIds": [],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-authored-workstation-lock-duration",
+    "title": "Workstation Lock Duration by User and Host",
+    "summary": "Pairs workstation lock (4800) and unlock (4801) events to report how long sessions stayed locked.",
+    "purpose": "Windows logs when a session is locked and unlocked. Pairing those events gives a simple, privacy-respecting way to understand workstation idle/lock patterns per host — useful for physical security reviews, badge-vs-lock correlation, or spotting workstations that are never locked.",
+    "spl": "index=<windows_index> sourcetype=WinEventLog:Security (EventCode=4800 OR EventCode=4801)\n| eval action=if(EventCode=4800,\"locked\",\"unlocked\")\n| eval user=TargetUserName\n| transaction user, ComputerName startswith=\"action=locked\" endswith=\"action=unlocked\" maxspan=12h\n| eval lock_minutes=round(duration/60,2)\n| table _time user ComputerName lock_minutes eventcount\n| sort - lock_minutes",
+    "category": "Threat Detection",
+    "subcategory": "Physical Security",
+    "useCases": [
+      "Investigation",
+      "Reporting"
+    ],
+    "commands": [
+      "eval",
+      "transaction",
+      "table",
+      "sort"
+    ],
+    "platforms": [
+      "Windows"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Windows Security Event Log"
+    ],
+    "indexes": [
+      "<windows_index>"
+    ],
+    "sourcetypes": [
+      "WinEventLog:Security"
+    ],
+    "requiredFields": [
+      "EventCode",
+      "TargetUserName",
+      "ComputerName"
+    ],
+    "optionalFields": [],
+    "outputFields": [
+      "_time",
+      "user",
+      "ComputerName",
+      "lock_minutes",
+      "eventcount"
+    ],
+    "cimDomains": [],
+    "dataModels": [],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "session-lock",
+      "physical-security",
+      "idle-time"
+    ],
+    "difficulty": "Intermediate",
+    "searchType": "Reporting",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<windows_index> sourcetype=WinEventLog:Security (EventCode=4800 OR EventCode=4801)",
+        "description": "Retrieves workstation lock (4800) and unlock (4801) events."
+      },
+      {
+        "stage": 2,
+        "spl": "| eval action=if(EventCode=4800,\"locked\",\"unlocked\")",
+        "description": "Labels each event as a lock or unlock action."
+      },
+      {
+        "stage": 3,
+        "spl": "| transaction user, ComputerName startswith=\"action=locked\" endswith=\"action=unlocked\" maxspan=12h",
+        "description": "Groups each lock event with its matching unlock event for the same user and host, capping the pairing window at 12 hours."
+      },
+      {
+        "stage": 4,
+        "spl": "| eval lock_minutes=round(duration/60,2)",
+        "description": "Converts the transaction's duration (in seconds) into minutes for readability."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "_time": "2026-08-01 12:00:00",
+        "user": "jsmith",
+        "ComputerName": "WKSTN-08",
+        "lock_minutes": "63.2",
+        "eventcount": "2"
+      }
+    ],
+    "customisationNotes": [
+      "Replace <windows_index> with your Windows index.",
+      "`transaction` does not scale well over very large time ranges — run this over a bounded window (a day or a shift) rather than months of history.",
+      "Sessions still locked at the end of the search window will not produce a paired row since no matching unlock event exists yet."
+    ],
+    "performanceNotes": [
+      "Uses `transaction`, which is single-threaded and can be slow at scale — for a long-running dashboard, consider precomputing with `streamstats`/`stats` using earliest/latest per session instead."
+    ],
+    "prerequisites": [],
+    "attack": {
+      "tactics": [],
+      "techniques": []
+    },
+    "detection": {
+      "analyticType": "Reporting",
+      "riskObjects": [
+        "user"
+      ],
+      "falsePositives": [],
+      "investigationSteps": [
+        "Compare unusually long lock durations against expected working patterns.",
+        "Cross-reference workstations that show no lock events at all against your lock-screen policy compliance."
+      ],
+      "drilldowns": []
+    },
+    "references": [],
+    "relatedEntryIds": [],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-authored-token-privilege-elevation",
+    "title": "Special Privilege Assignment at Logon (Token Elevation)",
+    "summary": "Reports EventCode 4672 (special privileges assigned to new logon) for accounts and hosts, highlighting where sensitive privileges are being granted.",
+    "purpose": "EventCode 4672 fires whenever a logon session is assigned one or more sensitive privileges (such as SeDebugPrivilege or SeTcbPrivilege), which typically only happens for administrative accounts. Reviewing this alongside the logon type and source helps confirm that privileged tokens are only being issued where expected, and can surface accounts that unexpectedly received elevated rights.",
+    "spl": "index=<windows_index> sourcetype=WinEventLog:Security EventCode=4672\n| eval user=SubjectUserName\n| where NOT match(user, \"(?i)\\$$\") AND NOT match(user, \"(?i)^(SYSTEM|LOCAL SERVICE|NETWORK SERVICE)$\")\n| stats count values(PrivilegeList) AS privileges_assigned earliest(_time) AS first_seen latest(_time) AS last_seen BY user, ComputerName\n| convert ctime(first_seen) ctime(last_seen)\n| sort - count",
+    "category": "Threat Detection",
+    "subcategory": "Privilege Escalation",
+    "useCases": [
+      "Threat Detection",
+      "Investigation"
+    ],
+    "commands": [
+      "eval",
+      "where",
+      "stats",
+      "convert",
+      "sort"
+    ],
+    "platforms": [
+      "Windows"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Windows Security Event Log"
+    ],
+    "indexes": [
+      "<windows_index>"
+    ],
+    "sourcetypes": [
+      "WinEventLog:Security"
+    ],
+    "requiredFields": [
+      "EventCode",
+      "SubjectUserName"
+    ],
+    "optionalFields": [
+      "PrivilegeList",
+      "ComputerName"
+    ],
+    "outputFields": [
+      "user",
+      "ComputerName",
+      "count",
+      "privileges_assigned",
+      "first_seen",
+      "last_seen"
+    ],
+    "cimDomains": [
+      "Authentication"
+    ],
+    "dataModels": [],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "privilege-escalation",
+      "token-elevation",
+      "administrative-access"
+    ],
+    "difficulty": "Intermediate",
+    "searchType": "Detection",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<windows_index> sourcetype=WinEventLog:Security EventCode=4672",
+        "description": "Retrieves special-privilege-assignment events, which fire when a new logon session is granted sensitive privileges."
+      },
+      {
+        "stage": 2,
+        "spl": "| eval user=SubjectUserName | where NOT match(user, \"(?i)\\$$\") AND NOT match(user, \"(?i)^(SYSTEM|LOCAL SERVICE|NETWORK SERVICE)$\")",
+        "description": "Excludes machine accounts and built-in system identities, which trigger this event constantly and aren't useful for reviewing human/service account elevation."
+      },
+      {
+        "stage": 3,
+        "spl": "| stats count values(PrivilegeList) AS privileges_assigned earliest(_time) AS first_seen latest(_time) AS last_seen BY user, ComputerName",
+        "description": "Summarizes which privileges were assigned to which accounts, on which hosts."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "user": "svc-deploy",
+        "ComputerName": "APPSRV03",
+        "count": "40",
+        "privileges_assigned": "SeDebugPrivilege, SeImpersonatePrivilege",
+        "first_seen": "2026-08-01 00:03:00",
+        "last_seen": "2026-08-02 23:58:00"
+      }
+    ],
+    "customisationNotes": [
+      "Replace <windows_index> with your Windows index.",
+      "This event is extremely common for legitimate administrative and service accounts — baseline expected accounts and hosts before alerting on this alone.",
+      "Focus review on privileges like SeDebugPrivilege or SeTcbPrivilege appearing for accounts or hosts where they are not normally expected."
+    ],
+    "performanceNotes": [
+      "EventCode 4672 can be high-volume on domain controllers and servers with frequent admin activity; keep the base search scoped to a bounded time range."
+    ],
+    "prerequisites": [],
+    "attack": {
+      "tactics": [
+        "Privilege Escalation"
+      ],
+      "techniques": [
+        "T1134"
+      ]
+    },
+    "detection": {
+      "analyticType": "Behavioural",
+      "riskObjects": [
+        "user",
+        "ComputerName"
+      ],
+      "falsePositives": [
+        "This event fires for virtually every legitimate administrative logon and many service accounts — it is only useful as a detection when scoped to unexpected accounts, hosts, or specific high-risk privileges, not as a blanket alert."
+      ],
+      "investigationSteps": [
+        "Confirm the account and host combination is an expected source of administrative activity.",
+        "Review the specific privileges granted — SeDebugPrivilege and SeTcbPrivilege in particular warrant closer review outside known admin tooling."
+      ],
+      "drilldowns": [
+        "Pull all logon and process-creation activity for the account on the same host around the same time."
+      ]
+    },
+    "references": [],
+    "relatedEntryIds": [],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
   }
 ]
