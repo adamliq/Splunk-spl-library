@@ -6,6 +6,7 @@
 <title>Splunk SPL Library — Offline SPL Reference &amp; Reusable Search Catalogue</title>
 <meta name="description" content="A standalone, fully offline browser application for browsing, searching, building and maintaining a library of Splunk SPL searches. No server, no Splunk connection, no external dependencies.">
 <meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230b0f14'/%3E%3Cpath fill='%23ff9c41' d='M4 18h2v-6H4v6zm4 0h2V9H8v9zm4 0h2V4h-2v14zm4 0h2v-9h-2v9zm4 0h2v-4h-2v4z'/%3E%3C/svg%3E">
 <style>
 /* ==========================================================================
    Splunk SPL Library — stylesheet
@@ -1115,7 +1116,8 @@ const StorageService = (function () {
     recentlyViewed: NS + "recentlyViewed.v1",
     copyCounts: NS + "copyCounts.v1",
     settings: NS + "settings.v1",
-    localOverrides: NS + "localOverrides.v1"
+    localOverrides: NS + "localOverrides.v1",
+    autoImportFlag: NS + "autoImportDone.v1"
   };
 
   let memoryFallback = {};
@@ -3929,10 +3931,21 @@ const SettingsPage = (function () {
         '<div class="settings-row"><div class="settings-row-text"><strong>Reset all application data</strong><span>Custom entries, favourites, collections, history and preferences — everything local</span></div><button type="button" class="btn btn-sm btn-danger" id="btnResetAll">Reset everything</button></div>' +
       "</div>" +
 
+      '<div class="settings-section"><h2 style="font-size:13px;">External Starter Data Pack</h2>' +
+        '<div class="settings-row"><div class="settings-row-text"><strong>custom-entries.json</strong><span>' +
+          (location.protocol === "file:"
+            ? "Not available when opened from a local file:// path — browsers block this kind of file loading there. Use Import instead."
+            : "If this deployment publishes a custom-entries.json next to the page, it is merged in automatically once, the first time this browser visits.") +
+          "</span></div>" +
+          (location.protocol === "file:" ? "" : '<button type="button" class="btn btn-sm" id="btnRecheckExternal">Re-check now</button>') +
+        "</div>" +
+      "</div>" +
+
       '<div class="settings-section"><h2 style="font-size:13px;">Diagnostics</h2>' +
         '<div class="settings-row"><div class="settings-row-text"><strong>Built-in library</strong><span>Read-only, restored automatically after a reset</span></div><span>' + LibraryRepository.getBuiltInCount() + " entries</span></div>" +
         '<div class="settings-row"><div class="settings-row-text"><strong>LocalStorage available</strong><span></span></div><span>' + (StorageService.isAvailable() ? "Yes" : "No — using in-memory fallback for this session") + "</span></div>" +
         '<div class="settings-row"><div class="settings-row-text"><strong>Command reference entries</strong><span></span></div><span>' + COMMAND_REFERENCE_DATA.length + "</span></div>" +
+        '<div class="settings-row"><div class="settings-row-text"><strong>Page protocol</strong><span></span></div><span>' + Utils.escapeHtml(location.protocol) + "</span></div>" +
       "</div>"
     );
     Utils.byId("settingsContent").innerHTML = html;
@@ -3940,6 +3953,19 @@ const SettingsPage = (function () {
   }
 
   function bind() {
+    const recheckBtn = Utils.byId("btnRecheckExternal");
+    if (recheckBtn) recheckBtn.addEventListener("click", async function () {
+      recheckBtn.disabled = true;
+      recheckBtn.textContent = "Checking…";
+      const result = await AppController.recheckExternalEntries();
+      recheckBtn.disabled = false;
+      recheckBtn.textContent = "Re-check now";
+      if (result && result.added) NotificationService.success("Added " + result.added + " new entr" + (result.added === 1 ? "y" : "ies") + " from custom-entries.json.");
+      else if (result && result.skipped === "not-found") NotificationService.info("No custom-entries.json found next to this page.");
+      else if (result && result.skipped === "error") NotificationService.warning("Could not load custom-entries.json: " + result.error);
+      else NotificationService.info("custom-entries.json checked — nothing new to add.");
+      render();
+    });
     document.querySelectorAll('input[name="themeChoice"]').forEach(function (r) { r.addEventListener("change", function () { ThemeManager.set(r.value); }); });
     document.querySelectorAll('input[name="defaultViewChoice"]').forEach(function (r) {
       r.addEventListener("change", function () { const p = prefs(); p.defaultView = r.value; savePrefs(p); NotificationService.info("Default view updated."); });
@@ -4022,7 +4048,7 @@ const HelpCentre = (function () {
     { id: "editing", title: "Editing Entries", html: "<p>Custom entries can be edited in place. Built-in entries are read-only source data — editing one always creates an independent custom copy, so the original built-in reference is never lost or altered.</p>" },
     { id: "favourites", title: "Using Favourites", html: "<p>Click the star icon on any card, row, or in the detail panel to favourite an entry. Filter by favourite status in the filter panel, or sort results with \"Favourite first\".</p>" },
     { id: "collections", title: "Creating Collections", html: "<p>Collections are named groups of entries — for example \"Windows investigations\" or \"Splunk health checks\". Use <b>Add to collection</b> from any entry's detail panel, or manage collections directly from the <b>Collections</b> tab.</p>" },
-    { id: "import-export", title: "Importing and Exporting", html: "<p>Export the full library, custom entries only, favourites, a collection, or a single entry as JSON (fully re-importable), CSV, Markdown, plain SPL, or a printable HTML report. Import accepts JSON or CSV; you'll see a preview and duplicate-detection summary before anything is written, and you choose whether to skip duplicates, keep both (new IDs), or replace all custom entries. Imported content is always treated as inert data — it is escaped before display and never executed.</p>" },
+    { id: "import-export", title: "Importing and Exporting", html: "<p>Export the full library, custom entries only, favourites, a collection, or a single entry as JSON (fully re-importable), CSV, Markdown, plain SPL, or a printable HTML report. Import accepts JSON or CSV; you'll see a preview and duplicate-detection summary before anything is written, and you choose whether to skip duplicates, keep both (new IDs), or replace all custom entries. Imported content is always treated as inert data — it is escaped before display and never executed.</p><p>If this copy of the app is served over http/https (for example from GitHub Pages) and a <code>custom-entries.json</code> file is published next to the page, it is automatically merged in as custom entries the first time this browser visits — no manual import needed. This auto-load step never runs when the page is opened from a local <code>file://</code> path, since browsers block that kind of file loading there; use the Import dialog instead in that case. See Settings → External Starter Data Pack to re-check manually.</p>" },
     { id: "backup", title: "Backing Up Local Data", html: "<p>Settings → Local Storage → <b>Export backup</b> downloads a single JSON file containing your custom entries, favourites, collections and preferences.</p>" },
     { id: "restore", title: "Restoring Data", html: "<p>Settings → Local Storage → <b>Restore from backup</b> replaces current local data with the contents of a previously exported backup file, after confirmation.</p>" },
     { id: "builder", title: "Using the SPL Builder", html: "<p>The guided builder (section <b>SPL Builder</b>) helps assemble a starting search across index/sourcetype, filters, aggregation, grouping, time bucketing, and sorting, with a live SPL preview and stage-by-stage explanation. You can switch to direct text editing at any time, copy the result, or save it straight into your library. It is a starting point, not a guarantee the search will run unmodified in your environment.</p>" },
@@ -4508,6 +4534,33 @@ const AppController = (function () {
       SHORTCUTS.map(function (s) { return "<tr><td><kbd>" + Utils.escapeHtml(s.keys) + "</kbd></td><td>" + Utils.escapeHtml(s.desc) + "</td></tr>"; }).join("") + "</table>";
   }
 
+  /* ------------------------- Auto-load a sibling custom-entries.json ------------------------- */
+  /* Lets a deployment (e.g. GitHub Pages) ship a starter set of custom entries
+   * alongside index.html. Skipped entirely on file:// since browsers block
+   * fetch() of local files there — falls back to the manual Import dialog. */
+
+  async function maybeAutoLoadExternalEntries(force) {
+    if (location.protocol === "file:") return { skipped: "file-protocol" };
+    if (!force && StorageService.get(StorageService.KEYS.autoImportFlag, false)) return { skipped: "already-run" };
+    try {
+      const res = await fetch("custom-entries.json", { cache: "no-store" });
+      if (!res.ok) { StorageService.set(StorageService.KEYS.autoImportFlag, true); return { skipped: "not-found" }; }
+      const data = await res.json();
+      const entries = Array.isArray(data) ? data : (data && Array.isArray(data.entries) ? data.entries : []);
+      StorageService.set(StorageService.KEYS.autoImportFlag, true);
+      if (!entries.length) return { added: 0 };
+      const summary = LibraryRepository.importEntries(entries, "skip-duplicates");
+      if (summary.added) {
+        NotificationService.success("Loaded " + summary.added + " starter custom entr" + (summary.added === 1 ? "y" : "ies") + " from custom-entries.json.");
+        renderLibrary();
+      }
+      return summary;
+    } catch (e) {
+      StorageService.set(StorageService.KEYS.autoImportFlag, true);
+      return { skipped: "error", error: e.message };
+    }
+  }
+
   /* ------------------------- Bootstrap ------------------------- */
 
   function init() {
@@ -4529,9 +4582,14 @@ const AppController = (function () {
     Router.init();
 
     NotificationService.info("Library loaded — " + LibraryRepository.getBuiltInCount() + " built-in searches ready. Everything runs offline.", { duration: 4500 });
+
+    maybeAutoLoadExternalEntries();
   }
 
-  return { init: init, refreshAfterDataChange: refreshAfterDataChange, state: state };
+  return {
+    init: init, refreshAfterDataChange: refreshAfterDataChange, state: state,
+    recheckExternalEntries: function () { return maybeAutoLoadExternalEntries(true); }
+  };
 })();
 
 document.addEventListener("DOMContentLoaded", function () {
