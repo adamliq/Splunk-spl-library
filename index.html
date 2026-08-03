@@ -1176,12 +1176,123 @@ const StorageService = (function () {
       });
     } catch (e) { /* ignore */ }
     memoryFallback = {};
+    idbDb = null;
+    try { window.indexedDB && window.indexedDB.deleteDatabase(IDB_NAME); } catch (e) { /* ignore */ }
+  }
+
+  /* ---- IndexedDB-backed custom entry store ------------------------------
+   * Custom entries can grow into the many thousands, well past what's safe
+   * to keep in a single localStorage string (browsers commonly cap
+   * localStorage around 5-10MB total per origin). IndexedDB has a far
+   * higher practical quota and — unlike localStorage — supports per-record
+   * reads/writes instead of rewriting one giant blob on every change.
+   * Falls back to a localStorage-backed blob automatically if IndexedDB is
+   * unavailable (e.g. some private-browsing modes), so the app still works
+   * everywhere; callers never need to know which backend is in use. */
+  const IDB_NAME = "splLibraryDB";
+  const IDB_STORE = "customEntries";
+  const idbSupported = typeof window !== "undefined" && !!window.indexedDB;
+  let idbDb = null;
+  let idbOpenPromise = null;
+
+  function idbOpen() {
+    if (!idbSupported) return Promise.reject(new Error("IndexedDB unavailable"));
+    if (idbDb) return Promise.resolve(idbDb);
+    if (idbOpenPromise) return idbOpenPromise;
+    idbOpenPromise = new Promise(function (resolve, reject) {
+      let req;
+      try { req = window.indexedDB.open(IDB_NAME, 1); }
+      catch (e) { reject(e); return; }
+      req.onupgradeneeded = function () {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE, { keyPath: "id" });
+      };
+      req.onsuccess = function () { idbDb = req.result; resolve(idbDb); };
+      req.onerror = function () { reject(req.error || new Error("IndexedDB open failed")); };
+      req.onblocked = function () { reject(new Error("IndexedDB open blocked")); };
+    });
+    return idbOpenPromise;
+  }
+
+  function idbTx(mode) {
+    return idbOpen().then(function (db) { return db.transaction(IDB_STORE, mode).objectStore(IDB_STORE); });
+  }
+
+  function idbGetAllEntries() {
+    if (!idbSupported) return Promise.resolve(get(KEYS.customEntries, []));
+    return idbTx("readonly").then(function (store) {
+      return new Promise(function (resolve, reject) {
+        const req = store.getAll();
+        req.onsuccess = function () { resolve(req.result || []); };
+        req.onerror = function () { reject(req.error); };
+      });
+    }).catch(function () { return get(KEYS.customEntries, []); });
+  }
+
+  function idbPutEntry(entry) {
+    if (!idbSupported) return Promise.resolve();
+    return idbTx("readwrite").then(function (store) {
+      return new Promise(function (resolve, reject) {
+        const req = store.put(entry);
+        req.onsuccess = function () { resolve(); };
+        req.onerror = function () { reject(req.error); };
+      });
+    });
+  }
+
+  function idbPutEntries(entries) {
+    if (!idbSupported) return Promise.resolve();
+    return idbTx("readwrite").then(function (store) {
+      return new Promise(function (resolve, reject) {
+        let tx = store.transaction;
+        entries.forEach(function (e) { store.put(e); });
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { reject(tx.error); };
+      });
+    });
+  }
+
+  function idbDeleteEntry(id) {
+    if (!idbSupported) return Promise.resolve();
+    return idbTx("readwrite").then(function (store) {
+      return new Promise(function (resolve, reject) {
+        const req = store.delete(id);
+        req.onsuccess = function () { resolve(); };
+        req.onerror = function () { reject(req.error); };
+      });
+    });
+  }
+
+  function idbClearEntries() {
+    if (!idbSupported) { set(KEYS.customEntries, []); return Promise.resolve(); }
+    return idbTx("readwrite").then(function (store) {
+      return new Promise(function (resolve, reject) {
+        const req = store.clear();
+        req.onsuccess = function () { resolve(); };
+        req.onerror = function () { reject(req.error); };
+      });
+    });
+  }
+
+  // One-time migration for browsers that already have custom entries saved
+  // under the old localStorage-blob scheme, so nobody loses data on upgrade.
+  function idbMigrateFromLocalStorageIfNeeded() {
+    if (!idbSupported) return Promise.resolve();
+    const legacy = get(KEYS.customEntries, null);
+    if (!legacy || !Array.isArray(legacy) || !legacy.length) return Promise.resolve();
+    return idbPutEntries(legacy).then(function () {
+      remove(KEYS.customEntries);
+    }).catch(function () { /* leave legacy data in place if migration fails */ });
   }
 
   return {
     KEYS: KEYS, get: get, set: set, remove: remove,
     estimateUsageBytes: estimateUsageBytes, clearAllAppData: clearAllAppData,
-    isAvailable: function () { return storageAvailable; }
+    isAvailable: function () { return storageAvailable; },
+    isIndexedDbAvailable: function () { return idbSupported; },
+    idbGetAllEntries: idbGetAllEntries, idbPutEntry: idbPutEntry, idbPutEntries: idbPutEntries,
+    idbDeleteEntry: idbDeleteEntry, idbClearEntries: idbClearEntries,
+    idbMigrateFromLocalStorageIfNeeded: idbMigrateFromLocalStorageIfNeeded
   };
 })();
 
@@ -1859,8 +1970,16 @@ const LibraryRepository = (function () {
   let copyCounts = {};
   let builtInById = new Map();
 
-  function load() {
-    customEntries = StorageService.get(StorageService.KEYS.customEntries, []);
+  // Custom entries can number in the thousands, so they live in IndexedDB
+  // (see StorageService.idb*), not in a single localStorage blob. The
+  // in-memory `customEntries` array below is the synchronous source of
+  // truth for every read in this module — load() populates it once, async,
+  // at startup, and every mutator keeps it in sync immediately while the
+  // IndexedDB write happens in the background (fire-and-forget, matching
+  // how localStorage.setItem used to feel synchronous to callers).
+  async function load() {
+    await StorageService.idbMigrateFromLocalStorageIfNeeded();
+    customEntries = await StorageService.idbGetAllEntries();
     if (!Array.isArray(customEntries)) customEntries = [];
     const favArr = StorageService.get(StorageService.KEYS.favourites, []);
     favouriteIds = new Set(Array.isArray(favArr) ? favArr : []);
@@ -1868,7 +1987,18 @@ const LibraryRepository = (function () {
     builtInById = new Map(BUILT_IN_LIBRARY.map(function (e) { return [e.id, e]; }));
   }
 
-  function persistCustom() { StorageService.set(StorageService.KEYS.customEntries, customEntries); }
+  function persistCustom(entry) {
+    // Best-effort background write; in-memory array is already up to date.
+    StorageService.idbPutEntry(entry).catch(function (err) {
+      NotificationService.error("Could not save this change to local storage: " + (err && err.message ? err.message : "unknown error"));
+    });
+  }
+  function persistCustomBulk(entries) {
+    if (!entries.length) return;
+    StorageService.idbPutEntries(entries).catch(function (err) {
+      NotificationService.error("Could not save all changes to local storage: " + (err && err.message ? err.message : "unknown error"));
+    });
+  }
   function persistFavourites() { StorageService.set(StorageService.KEYS.favourites, Array.from(favouriteIds)); }
   function persistCopyCounts() { StorageService.set(StorageService.KEYS.copyCounts, copyCounts); }
 
@@ -1923,7 +2053,7 @@ const LibraryRepository = (function () {
     entry.modified = Utils.nowIso();
     entry.copyCount = 0;
     customEntries.push(entry);
-    persistCustom();
+    persistCustom(entry);
     return entry;
   }
 
@@ -1932,14 +2062,14 @@ const LibraryRepository = (function () {
     if (idx === -1) return null;
     const updated = Object.assign({}, customEntries[idx], patch, { id: id, sourceType: "custom", modified: Utils.nowIso() });
     customEntries[idx] = updated;
-    persistCustom();
+    persistCustom(updated);
     return updated;
   }
 
   function deleteCustom(id) {
     const before = customEntries.length;
     customEntries = customEntries.filter(function (e) { return e.id !== id; });
-    persistCustom();
+    StorageService.idbDeleteEntry(id).catch(function () { /* best effort */ });
     favouriteIds.delete(id);
     persistFavourites();
     CollectionManager.removeEntryFromAllCollections(id);
@@ -1960,7 +2090,7 @@ const LibraryRepository = (function () {
     copy.copyCount = 0;
     copy.relatedEntryIds = copy.relatedEntryIds || [];
     customEntries.push(copy);
-    persistCustom();
+    persistCustom(copy);
     return copy;
   }
 
@@ -1975,7 +2105,7 @@ const LibraryRepository = (function () {
 
   function incrementCopyCount(id) {
     const custom = customEntries.find(function (e) { return e.id === id; });
-    if (custom) { custom.copyCount = (custom.copyCount || 0) + 1; persistCustom(); return custom.copyCount; }
+    if (custom) { custom.copyCount = (custom.copyCount || 0) + 1; persistCustom(custom); return custom.copyCount; }
     copyCounts[id] = (copyCounts[id] || 0) + 1;
     persistCopyCounts();
     return copyCounts[id];
@@ -1993,13 +2123,22 @@ const LibraryRepository = (function () {
     return bestScore >= 0.82 ? best : null;
   }
 
-  function removeCustomEntriesAll() { customEntries = []; persistCustom(); }
+  function removeCustomEntriesAll() {
+    customEntries = [];
+    StorageService.idbClearEntries().catch(function () { /* best effort */ });
+  }
 
   function importEntries(entries, mode) {
     // mode: 'merge' | 'replace' | 'skip-duplicates'
     const existingIds = new Set(BUILT_IN_LIBRARY.map(function (e) { return e.id; }).concat(customEntries.map(function (e) { return e.id; })));
     const summary = { added: 0, skipped: 0, renamed: 0, errors: [] };
-    if (mode === "replace") { customEntries = []; existingIds.clear(); BUILT_IN_LIBRARY.forEach(function (e) { existingIds.add(e.id); }); }
+    const newlyAdded = [];
+    if (mode === "replace") {
+      customEntries = [];
+      existingIds.clear();
+      BUILT_IN_LIBRARY.forEach(function (e) { existingIds.add(e.id); });
+      StorageService.idbClearEntries().catch(function () { /* best effort */ });
+    }
     entries.forEach(function (raw, i) {
       try {
         const entry = Object.assign(blankEntry(), raw);
@@ -2014,25 +2153,28 @@ const LibraryRepository = (function () {
         if (!entry.created) entry.created = Utils.nowIso();
         existingIds.add(entry.id);
         customEntries.push(entry);
+        newlyAdded.push(entry);
         summary.added++;
       } catch (e) {
         summary.errors.push("Entry #" + (i + 1) + " failed to import: " + e.message);
       }
     });
-    persistCustom();
+    persistCustomBulk(newlyAdded);
     return summary;
   }
 
-  load();
+  const readyPromise = load();
 
   return {
-    reload: load, getAll: getAll, getById: getById, saveNew: saveNew, updateExisting: updateExisting,
+    reload: load, ready: function () { return readyPromise; },
+    getAll: getAll, getById: getById, saveNew: saveNew, updateExisting: updateExisting,
     deleteCustom: deleteCustom, duplicateEntry: duplicateEntry, toggleFavourite: toggleFavourite,
     isFavourite: isFavourite, getFavouriteIds: getFavouriteIds, clearFavourites: clearFavourites,
     incrementCopyCount: incrementCopyCount, findSimilarTitle: findSimilarTitle, uniqueId: uniqueId,
     blankEntry: blankEntry, removeCustomEntriesAll: removeCustomEntriesAll, importEntries: importEntries,
     getCustomCount: function () { return customEntries.length; },
-    getBuiltInCount: function () { return BUILT_IN_LIBRARY.length; }
+    getBuiltInCount: function () { return BUILT_IN_LIBRARY.length; },
+    isUsingIndexedDb: function () { return StorageService.isIndexedDbAvailable(); }
   };
 })();
 
@@ -3899,6 +4041,18 @@ const SettingsPage = (function () {
     const p = prefs();
     const used = StorageService.estimateUsageBytes();
     const pct = Utils.clamp((used / (5 * 1024 * 1024)) * 100, 1, 100);
+    // localStorage-only figure paints immediately; refine with the real
+    // total (localStorage + IndexedDB) once the browser reports it.
+    if (navigator.storage && navigator.storage.estimate) {
+      navigator.storage.estimate().then(function (est) {
+        const el = Utils.byId("storageUsedText");
+        if (el && est && typeof est.usage === "number") {
+          el.textContent = formatBytes(est.usage) + " total on device (custom entries + preferences) · " +
+            LibraryRepository.getCustomCount() + " custom entries · " + LibraryRepository.getFavouriteIds().length +
+            " favourites · " + CollectionManager.getAll().length + " collections";
+        }
+      }).catch(function () { /* not critical */ });
+    }
     const html = (
       '<div class="privacy-banner"><svg class="icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' +
       "<div>Everything in this app stays in this browser's local storage on this device — nothing is uploaded anywhere. Do not store real passwords, tokens, session cookies, private keys or production credentials in any entry.</div></div>" +
@@ -3919,7 +4073,7 @@ const SettingsPage = (function () {
       "</div>" +
 
       '<div class="settings-section"><h2 style="font-size:13px;">Local Storage</h2>' +
-        '<div class="settings-row"><div class="settings-row-text"><strong>Storage used</strong><span>' + formatBytes(used) + ' · ' + LibraryRepository.getCustomCount() + ' custom entries · ' + LibraryRepository.getFavouriteIds().length + ' favourites · ' + CollectionManager.getAll().length + " collections</span></div>" +
+        '<div class="settings-row"><div class="settings-row-text"><strong>Storage used</strong><span id="storageUsedText">' + formatBytes(used) + ' (localStorage only, refining…) · ' + LibraryRepository.getCustomCount() + ' custom entries · ' + LibraryRepository.getFavouriteIds().length + ' favourites · ' + CollectionManager.getAll().length + " collections</span></div>" +
           '<div style="width:140px;"><div class="storage-meter"><div class="storage-meter-fill" style="width:' + pct + '%;"></div></div></div></div>' +
         '<div class="settings-row"><div class="settings-row-text"><strong>Export full backup</strong><span>Custom entries, favourites, collections, and preferences as one JSON file</span></div>' +
           '<button type="button" class="btn btn-sm" id="btnExportBackup">Export backup</button></div>' +
@@ -3993,16 +4147,18 @@ const SettingsPage = (function () {
       reader.onload = function () {
         const parsed = Utils.safeJsonParse(String(reader.result));
         if (!parsed.ok || parsed.value._type !== "spl-library-backup") { NotificationService.error("This does not look like a valid backup file."); return; }
-        DialogManager.confirm("Restore this backup? Current custom entries, favourites and collections will be replaced.", { title: "Restore backup", okLabel: "Restore" }).then(function (ok) {
+        DialogManager.confirm("Restore this backup? Current custom entries, favourites and collections will be replaced.", { title: "Restore backup", okLabel: "Restore" }).then(async function (ok) {
           if (!ok) return;
           const b = parsed.value;
-          StorageService.set(StorageService.KEYS.customEntries, b.customEntries || []);
+          await StorageService.idbClearEntries();
+          if (b.customEntries && b.customEntries.length) await StorageService.idbPutEntries(b.customEntries);
+          StorageService.remove(StorageService.KEYS.customEntries); // clear any stale legacy blob so it can't shadow IndexedDB on next load
           StorageService.set(StorageService.KEYS.favourites, b.favourites || []);
           StorageService.set(StorageService.KEYS.collections, b.collections || []);
           if (b.displayPrefs) StorageService.set(StorageService.KEYS.displayPrefs, b.displayPrefs);
           if (b.searchHistory) StorageService.set(StorageService.KEYS.searchHistory, b.searchHistory);
           if (b.theme) ThemeManager.set(b.theme);
-          LibraryRepository.reload();
+          await LibraryRepository.reload();
           NotificationService.success("Backup restored.");
           render();
           AppController.refreshAfterDataChange({});
@@ -4019,10 +4175,10 @@ const SettingsPage = (function () {
       DialogManager.confirm("Delete all custom entries? Built-in entries are unaffected. This cannot be undone.", { title: "Remove custom entries" }).then(function (ok) { if (ok) { LibraryRepository.removeCustomEntriesAll(); NotificationService.success("Custom entries removed."); render(); AppController.refreshAfterDataChange({}); } });
     });
     Utils.byId("btnResetAll").addEventListener("click", function () {
-      DialogManager.confirm("Reset ALL application data on this device? This removes custom entries, favourites, collections, history and preferences. The built-in library is unaffected. This cannot be undone.", { title: "Reset application data", okLabel: "Reset everything" }).then(function (ok) {
+      DialogManager.confirm("Reset ALL application data on this device? This removes custom entries, favourites, collections, history and preferences. The built-in library is unaffected. This cannot be undone.", { title: "Reset application data", okLabel: "Reset everything" }).then(async function (ok) {
         if (!ok) return;
         StorageService.clearAllAppData();
-        LibraryRepository.reload();
+        await LibraryRepository.reload();
         NotificationService.success("Application data reset.");
         ThemeManager.init();
         render();
@@ -4563,7 +4719,7 @@ const AppController = (function () {
 
   /* ------------------------- Bootstrap ------------------------- */
 
-  function init() {
+  async function init() {
     const prefs = SettingsPage.prefs();
     state.view = prefs.defaultView || "grid";
     state.pageSize = prefs.pageSize || 24;
@@ -4577,6 +4733,10 @@ const AppController = (function () {
     bindKeyboardShortcuts();
     CommandReferencePage.init();
     SplBuilder.init();
+
+    // Custom entries load from IndexedDB asynchronously; everything that
+    // reads the library (search, filters, first render) waits for this.
+    await LibraryRepository.ready();
 
     Router.onChange(handleRouteChange);
     Router.init();
@@ -4593,13 +4753,11 @@ const AppController = (function () {
 })();
 
 document.addEventListener("DOMContentLoaded", function () {
-  try {
-    AppController.init();
-  } catch (e) {
+  AppController.init().catch(function (e) {
     console.error("Fatal init error", e);
     const region = document.getElementById("toastRegion");
     if (region) region.innerHTML = '<div class="toast t-error">The application failed to start: ' + Utils.escapeHtml(e.message) + "</div>";
-  }
+  });
 });
 </script>
 </body>
