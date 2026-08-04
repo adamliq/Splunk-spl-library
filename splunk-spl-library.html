@@ -2016,8 +2016,14 @@ const LibraryRepository = (function () {
     });
   }
   function persistCustomBulk(entries) {
-    if (!entries.length) return;
-    StorageService.idbPutEntries(entries).catch(function (err) {
+    // Unlike persistCustom (single-entry, fire-and-forget for UI responsiveness),
+    // this returns the write promise so bulk-import callers can await durable
+    // completion before reporting success or marking auto-import as done —
+    // at thousands-of-entries scale the underlying IndexedDB transaction can
+    // take several seconds, and a reload/close before it commits would
+    // otherwise silently lose the import.
+    if (!entries.length) return Promise.resolve();
+    return StorageService.idbPutEntries(entries).catch(function (err) {
       NotificationService.error("Could not save all changes to local storage: " + (err && err.message ? err.message : "unknown error"));
     });
   }
@@ -2150,8 +2156,11 @@ const LibraryRepository = (function () {
     StorageService.idbClearEntries().catch(function () { /* best effort */ });
   }
 
-  function importEntries(entries, mode) {
+  async function importEntries(entries, mode) {
     // mode: 'merge' | 'replace' | 'skip-duplicates'
+    // async: callers should await this so a bulk import is durably written to
+    // IndexedDB before they report success or mark auto-import as complete —
+    // see persistCustomBulk for why this matters at import scale.
     const existingIds = new Set(BUILT_IN_LIBRARY.map(function (e) { return e.id; }).concat(customEntries.map(function (e) { return e.id; })));
     const summary = { added: 0, skipped: 0, renamed: 0, errors: [] };
     const newlyAdded = [];
@@ -2181,7 +2190,7 @@ const LibraryRepository = (function () {
         summary.errors.push("Entry #" + (i + 1) + " failed to import: " + e.message);
       }
     });
-    persistCustomBulk(newlyAdded);
+    await persistCustomBulk(newlyAdded);
     return summary;
   }
 
@@ -3195,7 +3204,7 @@ const Csv = (function () {
  * ImportExportService
  * ---------------------------------------------------------------------- */
 const ImportExportService = (function () {
-  const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
+  const MAX_IMPORT_BYTES = 128 * 1024 * 1024;
   const CSV_COLUMNS = ["id", "title", "summary", "category", "subcategory", "difficulty", "searchType",
     "validationStatus", "sourceType", "platforms", "dataSources", "tags", "commands", "requiredFields", "spl"];
 
@@ -3421,7 +3430,7 @@ const ImportExportService = (function () {
     previewWrap.innerHTML = "";
     if (!file) return;
     if (file.size > MAX_IMPORT_BYTES) {
-      previewWrap.innerHTML = '<div class="form-warning">File is too large (' + Math.round(file.size / 1024 / 1024) + ' MB). The practical import limit is 20 MB.</div>';
+      previewWrap.innerHTML = '<div class="form-warning">File is too large (' + Math.round(file.size / 1024 / 1024) + ' MB). The practical import limit is 128 MB.</div>';
       return;
     }
     const reader = new FileReader();
@@ -3472,8 +3481,8 @@ const ImportExportService = (function () {
     }
   }
 
-  function finishImport(mode) {
-    const summary = LibraryRepository.importEntries(pendingImportEntries, mode);
+  async function finishImport(mode) {
+    const summary = await LibraryRepository.importEntries(pendingImportEntries, mode);
     DialogManager.close("dlgImport");
     NotificationService.success("Import complete: " + summary.added + " added" + (summary.skipped ? ", " + summary.skipped + " skipped" : "") + (summary.renamed ? ", " + summary.renamed + " renamed to avoid ID clashes" : "") + ".");
     if (summary.errors.length) NotificationService.warning(summary.errors.length + " row(s) had errors — see console for detail.");
@@ -4856,9 +4865,13 @@ const AppController = (function () {
       if (!res.ok) { StorageService.set(StorageService.KEYS.autoImportFlag, true); return { skipped: "not-found" }; }
       const data = await res.json();
       const entries = Array.isArray(data) ? data : (data && Array.isArray(data.entries) ? data.entries : []);
+      if (!entries.length) { StorageService.set(StorageService.KEYS.autoImportFlag, true); return { added: 0 }; }
+      // Flag is set only after the import is durably persisted (importEntries
+      // now awaits persistCustomBulk internally) — if the tab closes or
+      // reloads mid-import, the flag stays false and the next load retries
+      // instead of silently ending up permanently "done" with partial data.
+      const summary = await LibraryRepository.importEntries(entries, "skip-duplicates");
       StorageService.set(StorageService.KEYS.autoImportFlag, true);
-      if (!entries.length) return { added: 0 };
-      const summary = LibraryRepository.importEntries(entries, "skip-duplicates");
       if (summary.added) {
         NotificationService.success("Loaded " + summary.added + " starter custom entr" + (summary.added === 1 ? "y" : "ies") + " from custom-entries.json.");
         renderLibrary();
