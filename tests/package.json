@@ -1,0 +1,11 @@
+{
+  "name": "splunk-spl-library-tests",
+  "private": true,
+  "description": "Regression test suite for the Splunk SPL Library app. No build step; see README.md.",
+  "scripts": {
+    "test": "node run-all.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.0"
+  }
+}
