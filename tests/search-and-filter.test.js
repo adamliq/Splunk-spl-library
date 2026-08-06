@@ -27,12 +27,40 @@ async function main() {
     t.gte(after, 1, "\"authentication\" search returns at least one result");
   });
 
+  let openedEntryId = "";
   await t.step("opening a result shows SPL in the detail panel", async () => {
     await page.locator(".entry-card").first().click();
     await page.waitForTimeout(300);
     const body = await page.locator("#detailBody").innerText();
     t.ok(body.length > 50, "detail panel has non-trivial content");
     t.ok(/PURPOSE|SPL/i.test(body), "detail panel includes a PURPOSE or SPL section heading");
+    openedEntryId = await page.evaluate(() => {
+      const el = document.querySelector(".entry-card.selected");
+      return el ? el.getAttribute("data-id") : "";
+    });
+    t.ok(!!openedEntryId, "opened entry's id was recovered from the selected card (" + openedEntryId + ")");
+  });
+
+  await t.step("detail panel shows the entry's ID as a visible property", async () => {
+    const body = await page.locator("#detailBody").innerText();
+    t.ok(/\bID\b/.test(body), "detail panel body includes an ID label");
+    t.ok(!!openedEntryId && body.indexOf(openedEntryId) !== -1, "detail panel body contains the actual entry id (" + openedEntryId + ")");
+  });
+
+  await t.step("the entry's ID is searchable from the global search bar", async () => {
+    t.ok(!!openedEntryId, "have an id from the previous step to search for");
+    await page.fill("#globalSearchInput", openedEntryId);
+    await page.waitForTimeout(500);
+    const count = await page.locator(".entry-card").count();
+    t.gte(count, 1, "searching for the raw id \"" + openedEntryId + "\" returns at least one result");
+    const firstCardId = await page.locator(".entry-card").first().getAttribute("data-id");
+    t.eq(firstCardId, openedEntryId, "the top result when searching by id is the entry with that id");
+
+    // Also verify the field-scoped id: operator works.
+    await page.fill("#globalSearchInput", 'id:"' + openedEntryId + '"');
+    await page.waitForTimeout(500);
+    const scopedCount = await page.locator(".entry-card").count();
+    t.gte(scopedCount, 1, 'id:"' + openedEntryId + '" field-scoped search returns at least one result');
   });
 
   await t.step("copy-SPL control writes the SPL text to the clipboard", async () => {

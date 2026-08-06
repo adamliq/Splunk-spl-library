@@ -2220,13 +2220,14 @@ const SearchEngine = (function () {
     platform: "platforms", platforms: "platforms", sourcetype: "sourcetypes", sourcetypes: "sourcetypes",
     difficulty: "difficulty", attack: "attackTechniques", technique: "attackTechniques",
     category: "category", index: "indexes", indexes: "indexes", product: "products", products: "products",
-    datasource: "dataSources", searchtype: "searchType"
+    datasource: "dataSources", searchtype: "searchType", id: "id", ids: "id"
   };
 
   function normalize(str) { return String(str || "").toLowerCase(); }
 
   function fieldValues(entry, field) {
     switch (field) {
+      case "id": return [entry.id || ""];
       case "commands": return entry.commands || [];
       case "tags": return entry.tags || [];
       case "platforms": return entry.platforms || [];
@@ -2244,7 +2245,7 @@ const SearchEngine = (function () {
 
   function buildBlob(entry) {
     return normalize([
-      entry.title, entry.summary, entry.purpose, entry.spl, entry.category, entry.subcategory,
+      entry.id, entry.title, entry.summary, entry.purpose, entry.spl, entry.category, entry.subcategory,
       (entry.commands || []).join(" "), (entry.tags || []).join(" "), (entry.platforms || []).join(" "),
       (entry.dataSources || []).join(" "), (entry.sourcetypes || []).join(" "), (entry.requiredFields || []).join(" "),
       ((entry.attack && entry.attack.techniques) || []).join(" "),
@@ -2296,13 +2297,17 @@ const SearchEngine = (function () {
       if (blob.indexOf(phrase) === -1) return -1;
       s += 12;
       if (normalize(entry.title).indexOf(phrase) !== -1) s += 20;
+      if (normalize(entry.id).indexOf(phrase) !== -1) s += 20;
     }
     for (const term of parsed.terms) {
       if (blob.indexOf(term) === -1) return -1;
       const title = normalize(entry.title);
+      const id = normalize(entry.id);
       if (title === term) s += 40;
       else if (title.indexOf(term) === 0) s += 25;
       else if (title.indexOf(term) !== -1) s += 15;
+      if (id === term) s += 40;
+      else if (id.indexOf(term) !== -1) s += 20;
       if (normalize(entry.summary).indexOf(term) !== -1) s += 8;
       if ((entry.tags || []).some(function (t) { return normalize(t).indexOf(term) !== -1; })) s += 10;
       if ((entry.commands || []).some(function (t) { return normalize(t) === term; })) s += 10;
@@ -2701,6 +2706,7 @@ const DetailRenderer = (function () {
     function row(label, value) { return "<dt>" + label + "</dt><dd>" + Utils.escapeHtml(value || "—") + "</dd>"; }
     return (
       '<dl class="detail-meta-grid">' +
+        row("ID", entry.id) +
         row("Category", entry.category) + row("Subcategory", entry.subcategory) +
         row("Difficulty", entry.difficulty) + row("Search Type", entry.searchType) +
         row("Validation Status", entry.validationStatus) + row("Source", entry.sourceType === "custom" ? "Custom" : "Built-in") +
