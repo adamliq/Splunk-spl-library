@@ -2734,6 +2734,8 @@ const DetailRenderer = (function () {
     return (
       '<button type="button" class="btn btn-primary btn-sm" data-action="copy-spl" data-id="' + entry.id + '">' +
         '<svg class="icon" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy SPL</button>' +
+      '<button type="button" class="btn btn-sm" data-action="copy-link" data-id="' + entry.id + '" title="Copy a direct link to this entry">' +
+        '<svg class="icon" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Copy Link</button>' +
       '<button type="button" class="btn btn-sm" data-action="edit-entry" data-id="' + entry.id + '">Edit</button>' +
       '<button type="button" class="btn btn-sm" data-action="duplicate-entry" data-id="' + entry.id + '">Duplicate</button>' +
       '<button type="button" class="btn btn-sm" data-action="toggle-favourite" data-id="' + entry.id + '" aria-pressed="' + entry._isFavourite + '">' + (entry._isFavourite ? "★ Favourited" : "☆ Favourite") + "</button>" +
@@ -4551,6 +4553,26 @@ const AppController = (function () {
     }
   }
 
+  function deepLinkForEntry(id) {
+    // location.origin is "null" (and location.pathname unreliable) on file://,
+    // so build off href with the hash stripped rather than assuming http(s).
+    const href = window.location.href;
+    const hashIdx = href.indexOf("#");
+    const base = hashIdx === -1 ? href : href.slice(0, hashIdx);
+    return base + "#entry/" + encodeURIComponent(id);
+  }
+
+  async function copyLinkForEntry(id) {
+    const entry = LibraryRepository.getById(id);
+    if (!entry) return;
+    const ok = await Utils.copyToClipboard(deepLinkForEntry(id));
+    if (ok) {
+      NotificationService.success("Link copied to clipboard.");
+    } else {
+      NotificationService.error("Clipboard access was blocked. Copy the link manually.");
+    }
+  }
+
   function printEntryById(id) {
     if (state.selectedEntryId !== id) openEntryInPanel(id);
     Utils.byId("printDate").textContent = new Date().toLocaleString();
@@ -4722,6 +4744,7 @@ const AppController = (function () {
           break;
         }
         case "copy-spl": copySplForEntry(id); break;
+        case "copy-link": copyLinkForEntry(id); break;
         case "edit-entry": EntryEditor.open(id); break;
         case "duplicate-entry": {
           const dup = LibraryRepository.duplicateEntry(id);
@@ -4916,7 +4939,21 @@ const AppController = (function () {
 
     NotificationService.info("Library loaded — " + LibraryRepository.getBuiltInCount() + " built-in searches ready. Everything runs offline.", { duration: 4500 });
 
-    maybeAutoLoadExternalEntries();
+    // If the initial URL is a deep link to a specific entry (e.g. a shared
+    // "Copy Link" URL) but that entry is one of the custom entries that
+    // hasn't been auto-imported into IndexedDB yet on a brand-new visit,
+    // the lookup just above (inside Router.init()'s first applyRoute) will
+    // have failed and bounced back to the library view before the
+    // auto-import below has had a chance to run. Remember the requested id
+    // and retry the navigation once auto-import finishes, so shared links
+    // to custom entries resolve correctly on a first-ever visit too.
+    const pendingDeepLinkId = (Router.current() === "entry" && !state.selectedEntryId) ? Router.currentParam() : null;
+
+    await maybeAutoLoadExternalEntries();
+
+    if (pendingDeepLinkId && !state.selectedEntryId && LibraryRepository.getById(pendingDeepLinkId)) {
+      Router.navigate("entry", pendingDeepLinkId);
+    }
   }
 
   return {

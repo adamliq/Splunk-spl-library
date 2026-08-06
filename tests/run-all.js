@@ -24,7 +24,8 @@ const TEST_FILES = [
   "regex-library.test.js",
   "entry-editor.test.js",
   "standalone-offline.test.js",
-  "import-persistence.test.js", // slowest (imports the full multi-MB library) -- runs last
+  "import-persistence.test.js", // slowest single-import test (imports the full multi-MB library)
+  "deep-link.test.js", // slowest overall: two full-library auto-imports (standalone + http) -- runs last
 ];
 
 function main() {

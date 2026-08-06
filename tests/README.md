@@ -40,6 +40,7 @@ and exits non-zero if any of them failed.
 | `entry-editor.test.js` | Creating a custom entry through the real UI, persistence across reload (the single-entry save path), delete. |
 | `standalone-offline.test.js` | The standalone build makes **zero** network requests on boot or reload, and all embedded entries auto-import and persist. |
 | `import-persistence.test.js` | The most important test — imports the full current `custom-entries.json` through the real Import dialog and verifies durability via IndexedDB directly (not just in-memory state), including surviving an immediate reload. See "Why `import-persistence.test.js` exists" below. |
+| `deep-link.test.js` | The "Copy Link" button produces a well-formed `#entry/<id>` URL, and loading such a URL opens straight to that entry — for a built-in entry immediately, and for a *custom* entry on a completely fresh browser (empty IndexedDB/localStorage) for both the standalone build and an http-served main build (simulating GitHub Pages). See "Why `deep-link.test.js` exists" below. |
 
 ## Why `import-persistence.test.js` exists
 
@@ -66,6 +67,29 @@ If you ever see `import-persistence.test.js` start failing again after a
 refactor of `ImportExportService` or `LibraryRepository.importEntries`,
 treat it as a real regression, not a flaky test — this exact class of bug
 is exactly what it exists to catch.
+
+## Why `deep-link.test.js` exists
+
+Every entry has a "Copy Link" button that puts a `#entry/<id>` URL on the
+clipboard, meant to be pasted into another webpage to jump straight to that
+SPL. The tricky case is a *custom* entry opened by a **completely fresh
+visitor** (empty IndexedDB/localStorage): `Router.init()` resolves the
+initial `#entry/<id>` hash and looks the entry up before custom-entry
+auto-import has had any chance to run, so that first lookup fails and
+silently bounces back to the library view — the shared link would appear
+broken. `AppController.init()` remembers the requested id and retries the
+navigation once auto-import finishes; `deep-link.test.js` is the regression
+guard for that retry, exercised against both the standalone build (`file://`,
+embedded entries) and an http-served main build via a throwaway local static
+server (`tests/lib/staticServer.js`), which is what actually stands in for
+the real GitHub Pages deployment — `file://` alone can't, since browsers
+block `fetch()` of local files there and the main build's auto-import never
+runs at all in that case.
+
+If this test starts failing after a change to `Router`, `handleRouteChange`,
+`openEntryInPanel`, or the deep-link retry block in `AppController.init()`,
+treat it as a real regression — it means shared links to custom entries are
+broken for anyone visiting for the first time.
 
 ## Adding a new test
 
