@@ -22,6 +22,7 @@ const TEST_FILES = [
   "app-boot.test.js",
   "search-and-filter.test.js",
   "regex-library.test.js",
+  "command-reference.test.js",
   "entry-editor.test.js",
   "standalone-offline.test.js",
   "import-persistence.test.js", // slowest single-import test (imports the full multi-MB library)

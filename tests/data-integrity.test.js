@@ -42,6 +42,18 @@ function extractEmbeddedCustomEntries(html) {
   return JSON.parse(m[1]);
 }
 
+function extractCommandReferenceData(html) {
+  const m = html.match(/const COMMAND_REFERENCE_DATA = (\[[\s\S]*?\]);\n/);
+  if (!m) return null;
+  return JSON.parse(m[1]);
+}
+
+const REQUIRED_COMMAND_KEYS = [
+  "command", "category", "purpose", "syntax", "example", "exampleDescription",
+  "inputType", "outputType", "commonOptions", "commonMistakes",
+  "performanceConsiderations", "relatedCommands", "relatedEntryIds",
+];
+
 async function main() {
   const t = new Reporter("data-integrity");
 
@@ -133,6 +145,54 @@ async function main() {
     t.eq(onlyInCustom, 0, "no custom-entries.json ids missing from the standalone build's embedded set");
     t.eq(onlyInEmbedded, 0, "no embedded ids in the standalone build that aren't in custom-entries.json");
   }
+
+  // ---- command reference: schema completeness, uniqueness, and command-type coverage ----
+  let commandRef = [];
+  await t.step("COMMAND_REFERENCE_DATA extracts and parses from splunk-spl-library.html", async () => {
+    commandRef = extractCommandReferenceData(mainHtml);
+    if (!commandRef) throw new Error("could not locate/parse COMMAND_REFERENCE_DATA literal");
+  });
+  t.gte(commandRef.length, 1, "command reference has at least one entry (" + commandRef.length + " found)");
+
+  let missingCommandKeyEntries = 0;
+  let firstMissingCommandExample = null;
+  for (const c of commandRef) {
+    const missing = REQUIRED_COMMAND_KEYS.filter((k) => !(k in c));
+    if (missing.length) {
+      missingCommandKeyEntries++;
+      if (!firstMissingCommandExample) firstMissingCommandExample = { command: c.command, missing };
+    }
+  }
+  t.eq(missingCommandKeyEntries, 0, "every command reference entry has all " + REQUIRED_COMMAND_KEYS.length + " required schema keys" +
+    (firstMissingCommandExample ? " (first offender: " + JSON.stringify(firstMissingCommandExample) + ")" : ""));
+
+  const commandNames = commandRef.map((c) => c.command).filter(Boolean);
+  const dupCommandNames = commandNames.length - new Set(commandNames).size;
+  t.eq(dupCommandNames, 0, "no duplicate command names in the command reference (" + commandNames.length + " total)");
+
+  const withCommandTypes = commandRef.filter((c) => Array.isArray(c.commandTypes) && c.commandTypes.length > 0);
+  t.gte(withCommandTypes.length, 90, "at least 90 command reference entries carry a commandTypes field (" + withCommandTypes.length + " found) " +
+    "-- regression guard for the six-type classification (distributable streaming, centralized streaming, transforming, generating, orchestrating, dataset processing)");
+
+  const VALID_TYPE_LABELS = new Set(["Distributable Streaming", "Centralized Streaming", "Transforming", "Generating", "Orchestrating", "Dataset Processing"]);
+  const badTypeLabels = [];
+  for (const c of commandRef) {
+    for (const label of (c.commandTypes || [])) {
+      if (!VALID_TYPE_LABELS.has(label)) badTypeLabels.push(c.command + ":" + label);
+    }
+  }
+  t.eq(badTypeLabels.length, 0, "every commandTypes label is one of the six canonical types" +
+    (badTypeLabels.length ? " (e.g. " + badTypeLabels[0] + ")" : ""));
+
+  // Spot-check a few specific commands known to need multi-type / conditional
+  // classification, so a future edit that flattens or drops the nuance is caught.
+  const byCommand = {};
+  for (const c of commandRef) byCommand[c.command] = c;
+  t.ok(byCommand.stats && (byCommand.stats.commandTypes || []).includes("Transforming"), "stats is classified as Transforming");
+  t.ok(byCommand.tstats && (byCommand.tstats.commandTypes || []).includes("Generating"), "tstats is classified as Generating");
+  t.ok(byCommand.dedup && (byCommand.dedup.commandTypes || []).length >= 2, "dedup carries multiple command types (its classification depends on arguments)");
+  t.ok(byCommand.dbinspect, "dbinspect exists in the command reference (was previously missing)");
+  t.ok(byCommand.union, "union exists in the command reference (was previously missing)");
 
   // ---- the app's own JS must contain the durability fix for bulk import ----
   // (regression guard for the race condition fixed in this session: importEntries
