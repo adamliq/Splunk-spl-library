@@ -48,6 +48,14 @@ function extractCommandReferenceData(html) {
   return JSON.parse(m[1]);
 }
 
+function extractRolesData(html) {
+  const m = html.match(/const ROLES_DATA = (\[[\s\S]*?\]);\n/);
+  if (!m) return null;
+  return JSON.parse(m[1]);
+}
+
+const REQUIRED_ROLE_KEYS = ["id", "name", "category", "description", "capabilityCount", "capabilities"];
+
 const REQUIRED_COMMAND_KEYS = [
   "command", "category", "purpose", "syntax", "example", "exampleDescription",
   "inputType", "outputType", "commonOptions", "commonMistakes",
@@ -193,6 +201,45 @@ async function main() {
   t.ok(byCommand.dedup && (byCommand.dedup.commandTypes || []).length >= 2, "dedup carries multiple command types (its classification depends on arguments)");
   t.ok(byCommand.dbinspect, "dbinspect exists in the command reference (was previously missing)");
   t.ok(byCommand.union, "union exists in the command reference (was previously missing)");
+
+  // ---- roles & capabilities: schema completeness, uniqueness, and sync across builds ----
+  let roles = [];
+  await t.step("ROLES_DATA extracts and parses from splunk-spl-library.html", async () => {
+    roles = extractRolesData(mainHtml);
+    if (!roles) throw new Error("could not locate/parse ROLES_DATA literal");
+  });
+  t.gte(roles.length, 20, "roles data has at least 20 roles (" + roles.length + " found)");
+
+  let missingRoleKeyEntries = 0;
+  let firstMissingRoleExample = null;
+  for (const r of roles) {
+    const missing = REQUIRED_ROLE_KEYS.filter((k) => !(k in r));
+    if (missing.length) {
+      missingRoleKeyEntries++;
+      if (!firstMissingRoleExample) firstMissingRoleExample = { id: r.id, missing };
+    }
+  }
+  t.eq(missingRoleKeyEntries, 0, "every role has all " + REQUIRED_ROLE_KEYS.length + " required schema keys" +
+    (firstMissingRoleExample ? " (first offender: " + JSON.stringify(firstMissingRoleExample) + ")" : ""));
+
+  const roleIds = roles.map((r) => r.id).filter(Boolean);
+  const dupRoleIds = roleIds.length - new Set(roleIds).size;
+  t.eq(dupRoleIds, 0, "no duplicate role ids (" + roleIds.length + " total)");
+
+  const countMismatches = roles.filter((r) => r.capabilityCount !== r.capabilities.length);
+  t.eq(countMismatches.length, 0, "every role's capabilityCount matches its capabilities array length" +
+    (countMismatches.length ? " (e.g. " + countMismatches[0].id + ")" : ""));
+
+  const adminRole = roles.find((r) => r.id === "admin");
+  t.ok(!!adminRole, "the Admin role exists in ROLES_DATA");
+  t.ok(!!adminRole && adminRole.capabilities.some((c) => c.name === "accelerate_datamodel"),
+    "the Admin role includes a known assigned capability (accelerate_datamodel)");
+
+  const standaloneRoles = extractRolesData(standaloneHtml);
+  t.ok(!!standaloneRoles, "ROLES_DATA also extracts and parses from the standalone build");
+  if (standaloneRoles) {
+    t.eq(standaloneRoles.length, roles.length, "standalone build's ROLES_DATA has the same role count as splunk-spl-library.html");
+  }
 
   // ---- the app's own JS must contain the durability fix for bulk import ----
   // (regression guard for the race condition fixed in this session: importEntries
