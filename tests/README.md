@@ -38,6 +38,7 @@ and exits non-zero if any of them failed.
 | `search-and-filter.test.js` | Global search, field-scoped search (`category:"..."`), detail-panel rendering, copy-to-clipboard. |
 | `regex-library.test.js` | Regex Library grid, category filter (alone and combined with search), the live pattern tester. |
 | `command-reference.test.js` | Command Reference grid, opening a command's detail (including previously-existing commands like `stats`), the six-type SPL command classification (`commandTypes`) rendering in the detail panel, that commands added for type coverage (e.g. `dbinspect`) are present, and that command-type labels are searchable. |
+| `splunk-cli.test.js` | Splunk CLI grid (operational shell commands using the `splunk` binary, distinct from SPL), category filtering, opening a command's detail (command block, explanation, prerequisites, warnings), copy-to-clipboard, and search. |
 | `entry-editor.test.js` | Creating a custom entry through the real UI, persistence across reload (the single-entry save path), delete. |
 | `standalone-offline.test.js` | The standalone build makes **zero** network requests on boot or reload, and all embedded entries auto-import and persist. |
 | `import-persistence.test.js` | The most important test — imports the full current `custom-entries.json` through the real Import dialog and verifies durability via IndexedDB directly (not just in-memory state), including surviving an immediate reload. See "Why `import-persistence.test.js` exists" below. |

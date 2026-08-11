@@ -23,6 +23,7 @@ const TEST_FILES = [
   "search-and-filter.test.js",
   "regex-library.test.js",
   "command-reference.test.js",
+  "splunk-cli.test.js",
   "entry-editor.test.js",
   "standalone-offline.test.js",
   "import-persistence.test.js", // slowest single-import test (imports the full multi-MB library)

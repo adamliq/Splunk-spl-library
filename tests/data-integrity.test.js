@@ -48,6 +48,14 @@ function extractCommandReferenceData(html) {
   return JSON.parse(m[1]);
 }
 
+function extractCliCommandsData(html) {
+  const m = html.match(/const CLI_COMMANDS_DATA = (\[[\s\S]*?\]);\n/);
+  if (!m) return null;
+  return JSON.parse(m[1]);
+}
+
+const REQUIRED_CLI_KEYS = ["id", "title", "category", "summary", "purpose", "command", "os"];
+
 const REQUIRED_COMMAND_KEYS = [
   "command", "category", "purpose", "syntax", "example", "exampleDescription",
   "inputType", "outputType", "commonOptions", "commonMistakes",
@@ -193,6 +201,36 @@ async function main() {
   t.ok(byCommand.dedup && (byCommand.dedup.commandTypes || []).length >= 2, "dedup carries multiple command types (its classification depends on arguments)");
   t.ok(byCommand.dbinspect, "dbinspect exists in the command reference (was previously missing)");
   t.ok(byCommand.union, "union exists in the command reference (was previously missing)");
+
+  // ---- Splunk CLI commands: schema completeness, uniqueness, and sync across builds ----
+  let cliCommands = [];
+  await t.step("CLI_COMMANDS_DATA extracts and parses from splunk-spl-library.html", async () => {
+    cliCommands = extractCliCommandsData(mainHtml);
+    if (!cliCommands) throw new Error("could not locate/parse CLI_COMMANDS_DATA literal");
+  });
+  t.gte(cliCommands.length, 1, "CLI commands data has at least one entry (" + cliCommands.length + " found)");
+
+  let missingCliKeyEntries = 0;
+  let firstMissingCliExample = null;
+  for (const c of cliCommands) {
+    const missing = REQUIRED_CLI_KEYS.filter((k) => !(k in c));
+    if (missing.length) {
+      missingCliKeyEntries++;
+      if (!firstMissingCliExample) firstMissingCliExample = { id: c.id, missing };
+    }
+  }
+  t.eq(missingCliKeyEntries, 0, "every CLI command has all " + REQUIRED_CLI_KEYS.length + " required schema keys" +
+    (firstMissingCliExample ? " (first offender: " + JSON.stringify(firstMissingCliExample) + ")" : ""));
+
+  const cliIds = cliCommands.map((c) => c.id).filter(Boolean);
+  const dupCliIds = cliIds.length - new Set(cliIds).size;
+  t.eq(dupCliIds, 0, "no duplicate CLI command ids (" + cliIds.length + " total)");
+
+  const standaloneCli = extractCliCommandsData(standaloneHtml);
+  t.ok(!!standaloneCli, "CLI_COMMANDS_DATA also extracts and parses from the standalone build");
+  if (standaloneCli) {
+    t.eq(standaloneCli.length, cliCommands.length, "standalone build's CLI_COMMANDS_DATA has the same command count as splunk-spl-library.html");
+  }
 
   // ---- the app's own JS must contain the durability fix for bulk import ----
   // (regression guard for the race condition fixed in this session: importEntries
