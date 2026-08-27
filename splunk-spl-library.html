@@ -233,6 +233,26 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible, input:focus-vis
 .search-suggest button:hover, .search-suggest button.active { background: var(--bg-hover); color: var(--text-0); }
 .search-suggest mark { background: transparent; color: var(--accent); font-weight: 700; }
 
+.tools-menu-wrap { position: relative; }
+.tools-menu-panel {
+  position: absolute; top: calc(100% + 6px); right: 0; min-width: 260px; background: var(--bg-1);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-md); box-shadow: var(--shadow);
+  z-index: 50; padding: 6px;
+}
+.tools-menu-panel[hidden] { display: none; }
+.tools-menu-title { padding: 6px 10px 4px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
+.tools-menu-item {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  background: transparent; border: none; border-radius: var(--radius-sm); color: var(--text-1);
+  padding: 9px 10px; font-size: 12.5px; text-decoration: none; box-sizing: border-box;
+}
+.tools-menu-item:hover, .tools-menu-item:focus-visible { background: var(--bg-hover); color: var(--text-0); }
+.tools-menu-item .tools-menu-item-icon { flex: none; width: 16px; height: 16px; color: var(--text-2); }
+.tools-menu-item .tools-menu-item-text { flex: 1; min-width: 0; }
+.tools-menu-item .tools-menu-item-text strong { display: block; color: inherit; }
+.tools-menu-item .tools-menu-item-text span { display: block; font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+.tools-menu-item .tools-menu-item-external { flex: none; width: 13px; height: 13px; color: var(--text-muted); }
+
 /* ---------------- Body layout ---------------- */
 .app-body { flex: 1; display: flex; min-height: 0; width: 100%; }
 .app-main { flex: 1; display: flex; min-width: 0; }
@@ -620,6 +640,22 @@ table.mini-table th { background: var(--bg-2); }
     <button type="button" class="btn btn-icon" id="btnThemeToggle" title="Toggle theme" aria-label="Toggle color theme">
       <svg class="icon" id="themeIconMoon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
     </button>
+    <div class="tools-menu-wrap">
+      <button type="button" class="btn btn-icon" id="btnToolsMenu" title="Companion tools" aria-label="Companion tools" aria-haspopup="true" aria-expanded="false">
+        <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      </button>
+      <div class="tools-menu-panel" id="toolsMenuPanel" role="menu" aria-label="Companion tools" hidden>
+        <div class="tools-menu-title">Companion Tools</div>
+        <a class="tools-menu-item" role="menuitem" href="https://adamliq.github.io/Splunk_Taxonomy/#my-tools" target="_blank" rel="noopener noreferrer">
+          <svg class="tools-menu-item-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3z"/><path d="M14 3h7v7h-7z"/><path d="M14 14h7v7h-7z"/><path d="M3 14h7v7H3z"/></svg>
+          <span class="tools-menu-item-text">
+            <strong>Splunk Taxonomy — My Tools</strong>
+            <span>Companion site: field/category taxonomy &amp; related tools</span>
+          </span>
+          <svg class="tools-menu-item-external" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </a>
+      </div>
+    </div>
     <button type="button" class="btn btn-icon" id="btnHelp" title="Help (?)" aria-label="Open help centre">
       <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"/><line x1="12" y1="17" x2="12" y2="17"/></svg>
     </button>
@@ -4973,6 +5009,33 @@ const AppController = (function () {
       ImportExportService.openExportDialog("all", { filteredEntries: lastFilteredEntries.map(function (e) { return e; }), entryId: state.selectedEntryId });
     });
     Utils.byId("btnThemeToggle").addEventListener("click", function () { ThemeManager.cycle(); });
+
+    (function initToolsMenu() {
+      var btn = Utils.byId("btnToolsMenu");
+      var panel = Utils.byId("toolsMenuPanel");
+      function closeToolsMenu() {
+        panel.hidden = true;
+        btn.setAttribute("aria-expanded", "false");
+      }
+      function openToolsMenu() {
+        panel.hidden = false;
+        btn.setAttribute("aria-expanded", "true");
+      }
+      btn.addEventListener("click", function (evt) {
+        evt.stopPropagation();
+        if (panel.hidden) openToolsMenu(); else closeToolsMenu();
+      });
+      document.addEventListener("click", function (evt) {
+        if (!panel.hidden && !panel.contains(evt.target) && evt.target !== btn) closeToolsMenu();
+      });
+      document.addEventListener("keydown", function (evt) {
+        if (evt.key === "Escape" && !panel.hidden) { closeToolsMenu(); btn.focus(); }
+      });
+      panel.querySelectorAll(".tools-menu-item").forEach(function (a) {
+        a.addEventListener("click", closeToolsMenu);
+      });
+    })();
+
     Utils.byId("btnHelp").addEventListener("click", function () { Router.navigate("help"); });
     Utils.byId("btnSettings").addEventListener("click", function () { Router.navigate("settings"); });
     Utils.byId("btnCloseDetail").addEventListener("click", function () { Router.navigate("library"); });
