@@ -353,6 +353,8 @@ table.results-table td.wrap { white-space: normal; }
 .badge-warning { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); }
 .badge-danger { color: var(--danger-strong); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
 .badge-outline-custom { color: var(--info); }
+.badge-info { color: var(--info); border-color: color-mix(in srgb, var(--info) 45%, var(--border)); }
+.badge-neutral-strong { color: var(--text-1); border-color: var(--border-strong); background: var(--bg-3); }
 
 .fav-toggle { background: transparent; border: none; color: var(--text-muted); padding: 4px; border-radius: 50%; display: flex; }
 .fav-toggle:hover { background: var(--bg-hover); }
@@ -412,6 +414,23 @@ table.results-table td.wrap { white-space: normal; }
 .pipeline-stage-perf { margin-left: auto; }
 .pipeline-stage-code { font-family: var(--mono); font-size: 11.5px; padding: 8px 10px; background: var(--bg-0); overflow-x: auto; white-space: pre; }
 .pipeline-stage-desc { padding: 8px 10px; font-size: 12px; color: var(--text-1); }
+
+/* ---------------- SPL Analyzer ---------------- */
+.analyzer-summary {
+  display: flex; flex-wrap: wrap; gap: 16px; align-items: center; background: var(--bg-1);
+  border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px 14px; margin-bottom: 14px; font-size: 12.5px;
+}
+.analyzer-summary .stat { display: flex; flex-direction: column; gap: 2px; }
+.analyzer-summary .stat .n { font-size: 18px; font-weight: 700; color: var(--text-0); }
+.analyzer-summary .stat .l { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
+.analyzer-summary .note { flex: 1; min-width: 220px; color: var(--text-1); }
+.analyzer-stage-types { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.analyzer-stage-notes { padding: 0 10px 8px; font-size: 11.5px; color: var(--text-2); font-style: italic; }
+.analyzer-exec-marker { padding: 6px 10px; font-size: 11px; color: var(--danger-strong); background: color-mix(in srgb, var(--danger) 10%, transparent); border-top: 1px dashed color-mix(in srgb, var(--danger) 40%, var(--border)); }
+.analyzer-legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-top: 18px; }
+.analyzer-legend-card { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px 12px; background: var(--bg-1); }
+.analyzer-legend-card .badge { margin-bottom: 6px; }
+.analyzer-legend-card p { font-size: 12px; color: var(--text-1); margin: 0; }
 
 .quality-finding { border-left: 3px solid var(--border-strong); background: var(--bg-2); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; padding: 8px 10px; margin-bottom: 8px; font-size: 12px; }
 .quality-finding.sev-high { border-color: var(--danger); }
@@ -673,6 +692,7 @@ table.mini-table th { background: var(--bg-2); }
   <a href="#regex" class="btn btn-ghost btn-sm nav-tab" data-route="regex">Regex Library</a>
   <a href="#cli" class="btn btn-ghost btn-sm nav-tab" data-route="cli">Splunk CLI</a>
   <a href="#builder" class="btn btn-ghost btn-sm nav-tab" data-route="builder">SPL Builder</a>
+  <a href="#analyzer" class="btn btn-ghost btn-sm nav-tab" data-route="analyzer">SPL Analyzer</a>
   <a href="#collections" class="btn btn-ghost btn-sm nav-tab" data-route="collections">Collections</a>
   <a href="#help" class="btn btn-ghost btn-sm nav-tab" data-route="help">Help</a>
   <a href="#settings" class="btn btn-ghost btn-sm nav-tab" data-route="settings">Settings</a>
@@ -835,6 +855,29 @@ table.mini-table th { background: var(--bg-2); }
             <div id="builderExplain" style="margin-top:14px;"></div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- ===================== SPL ANALYZER VIEW ===================== -->
+    <section class="router-view" id="view-analyzer" aria-label="SPL Command Type Analyzer">
+      <div class="page-scroll">
+        <div class="page-header">
+          <div>
+            <h1>SPL Command Type Analyzer</h1>
+            <div class="page-header-desc">Paste a search and see each pipeline stage's command type — Generating, Distributable Streaming, Centralized Streaming, Transforming, Orchestrating or Dataset Processing — the same taxonomy Splunk uses to decide what runs on the indexers versus the search head. Nothing here connects to Splunk; this is local, offline analysis only.</div>
+          </div>
+        </div>
+        <label class="visually-hidden" for="analyzerInput">SPL to analyze</label>
+        <textarea class="spl-input" id="analyzerInput" rows="6"
+          style="width:100%;font-family:var(--mono);font-size:12.5px;background:var(--bg-1);border:1px solid var(--border-strong);border-radius:var(--radius-sm);padding:10px;color:var(--text-0);"
+          placeholder="index=main sourcetype=access_combined status>=500&#10;| eval status_class=floor(status/100)&#10;| stats count by uri, status_class&#10;| sort -count"></textarea>
+        <div style="display:flex;gap:8px;margin:8px 0 16px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-sm" id="btnAnalyzerExample">Load example</button>
+          <button type="button" class="btn btn-sm" id="btnAnalyzerClear">Clear</button>
+        </div>
+        <div id="analyzerOutput"></div>
+        <h2 style="font-size:14px;margin-top:22px;">Command types, explained</h2>
+        <div class="analyzer-legend" id="analyzerLegend"></div>
       </div>
     </section>
 
@@ -1564,7 +1607,7 @@ const ThemeManager = (function () {
  * Router — hash-based navigation with preserved state
  * ---------------------------------------------------------------------- */
 const Router = (function () {
-  const routes = ["library", "entry", "commands", "regex", "cli", "builder", "collections", "help", "settings"];
+  const routes = ["library", "entry", "commands", "regex", "cli", "builder", "analyzer", "collections", "help", "settings"];
   const VIEW_ALIAS = { entry: "library" };
   let currentRoute = "library";
   let currentParam = null;
@@ -1820,6 +1863,53 @@ const PipelineAnalyser = (function () {
 
   const PERFORMANCE_FLAGGED = new Set(["join", "transaction", "map", "append", "appendcols", "collect"]);
 
+  // Command-type lookup, built from COMMAND_REFERENCE_DATA's own commandTypes/
+  // commandTypeNotes fields (the same official Splunk taxonomy — Distributable
+  // Streaming, Centralized Streaming, Transforming, Generating, Orchestrating,
+  // Dataset Processing — documented per-command with any conditional notes).
+  // Falls back to a small alias map for commands not individually documented.
+  const COMMAND_TYPE_ALIASES = { bucket: "bin" };
+  const COMMAND_TYPE_MAP = (function () {
+    const map = {};
+    (typeof COMMAND_REFERENCE_DATA !== "undefined" ? COMMAND_REFERENCE_DATA : []).forEach(function (c) {
+      map[c.command.toLowerCase()] = { types: c.commandTypes || [], notes: c.commandTypeNotes || null };
+    });
+    return map;
+  })();
+
+  function commandTypeInfoOf(command) {
+    const key = (command || "").toLowerCase();
+    if (COMMAND_TYPE_MAP[key]) return COMMAND_TYPE_MAP[key];
+    const alias = COMMAND_TYPE_ALIASES[key];
+    if (alias && COMMAND_TYPE_MAP[alias]) return COMMAND_TYPE_MAP[alias];
+    return { types: [], notes: null };
+  }
+
+  // A stage is treated as forcing search-head-only (centralized) execution
+  // once it needs anything other than distributable streaming/generating —
+  // i.e. Centralized Streaming, Transforming, Dataset Processing or
+  // Orchestrating. This mirrors Splunk's own guidance: a search runs
+  // distributed across indexers only until it hits the first command that
+  // cannot be pushed down, after which everything downstream runs centrally
+  // on the search head. Commands with no documented type are treated as
+  // unknown, not assumed distributable.
+  const CENTRALIZING_TYPES = new Set(["Centralized Streaming", "Transforming", "Dataset Processing", "Orchestrating"]);
+
+  // NOTE: "Generating" is deliberately its own bucket, not folded into
+  // "distributable" — some generating commands are report-generating
+  // (effectively distributable, e.g. tstats) and others are event-generating
+  // and explicitly centralized (e.g. inputlookup), and that distinction is
+  // only reliably captured in each command's free-text commandTypeNotes, not
+  // as a separate structured flag. Claiming a blanket answer here would be
+  // guessing, so the notes are surfaced per-stage instead.
+  function executionClassOf(types) {
+    if (!types || !types.length) return "unknown";
+    if (types.some(function (t) { return CENTRALIZING_TYPES.has(t); })) return "centralized";
+    if (types.indexOf("Distributable Streaming") !== -1) return "distributable";
+    if (types.indexOf("Generating") !== -1) return "generating";
+    return "unknown";
+  }
+
   function splitStages(spl) {
     const text = String(spl || "");
     const stages = [];
@@ -1887,6 +1977,7 @@ const PipelineAnalyser = (function () {
       return stages.map(function (stageText, idx) {
         const command = primaryCommandOf(stageText, idx === 0);
         const fields = extractFieldRefs(stageText);
+        const typeInfo = commandTypeInfoOf(command);
         return {
           stage: idx + 1,
           spl: (idx === 0 ? "" : "| ") + stageText,
@@ -1894,19 +1985,23 @@ const PipelineAnalyser = (function () {
           description: DESCRIPTIONS[command] || "A less common or custom command. Review the SPL directly, or consult Splunk documentation for exact behaviour.",
           flagged: PERFORMANCE_FLAGGED.has(command),
           introducedFields: fields.introduced,
-          referencedFields: fields.referenced
+          referencedFields: fields.referenced,
+          commandTypes: typeInfo.types,
+          commandTypeNotes: typeInfo.notes,
+          executionClass: executionClassOf(typeInfo.types)
         };
       });
     } catch (e) {
       return [{
         stage: 1, spl: String(spl || ""), command: "search",
         description: "Automatic pipeline analysis was unable to parse this search. The SPL itself is unaffected — this is a display-only limitation.",
-        flagged: false, introducedFields: [], referencedFields: []
+        flagged: false, introducedFields: [], referencedFields: [],
+        commandTypes: [], commandTypeNotes: null, executionClass: "unknown"
       }];
     }
   }
 
-  return { analyse: analyse, splitStages: splitStages };
+  return { analyse: analyse, splitStages: splitStages, commandTypeInfoOf: commandTypeInfoOf, executionClassOf: executionClassOf };
 })();
 
 /* ---------------------------------------------------------------------- *
@@ -4048,6 +4143,144 @@ const SplBuilder = (function () {
 })();
 
 /* ---------------------------------------------------------------------- *
+ * AnalyzerPage — paste-a-search command-type analyzer. Splits the pasted
+ * SPL into pipeline stages via PipelineAnalyser and shows each stage's
+ * official Splunk command type (Generating, Distributable Streaming,
+ * Centralized Streaming, Transforming, Orchestrating, Dataset Processing),
+ * plus where in the pipeline execution first becomes search-head-only.
+ * Purely local/offline text analysis — never sends anything anywhere.
+ * ---------------------------------------------------------------------- */
+const AnalyzerPage = (function () {
+  const EXAMPLE_SPL =
+    "index=main sourcetype=access_combined status>=500\n" +
+    "| eval status_class=floor(status/100)\n" +
+    "| stats count by uri, status_class\n" +
+    "| sort -count";
+
+  const TYPE_META = {
+    "Generating": {
+      badge: "badge-success",
+      def: "Either returns information from an index, data model, lookup or CSV file, or produces synthetic results — usually the first command in a pipeline. Some generating commands are report-generating (effectively distributable, e.g. tstats); others are event-generating and run centrally (e.g. inputlookup). Check this stage's note below."
+    },
+    "Distributable Streaming": {
+      badge: "badge-accent",
+      def: "Processes each event independently, with no need to know about any other event. Can run in parallel across the indexers before results ever reach the search head — the fastest, most scalable stage type."
+    },
+    "Centralized Streaming": {
+      badge: "badge-info",
+      def: "Also processes one event at a time, but needs events in a particular order (or otherwise can't be parallelized), so it only runs on the search head."
+    },
+    "Transforming": {
+      badge: "badge-warning",
+      def: "Reshapes matching events into a statistical results table, discarding the original raw events. Runs on the search head."
+    },
+    "Orchestrating": {
+      badge: "badge-neutral-strong",
+      def: "Manages how the search itself runs — for example redistributing work — rather than touching the event data. Doesn't affect search results."
+    },
+    "Dataset Processing": {
+      badge: "badge-danger",
+      def: "Needs the entire result set in hand before it can run at all — not streaming, not distributable, and not orchestrating. Runs on the search head, after everything upstream has completed."
+    }
+  };
+  const EXEC_CLASS_LABEL = { distributable: "Distributable", centralized: "Search head only", generating: "Starts pipeline", unknown: "Type unknown" };
+
+  function stageTypeBadges(st) {
+    if (!st.commandTypes || !st.commandTypes.length) {
+      return '<span class="badge badge-neutral-strong">Type unknown</span>';
+    }
+    return st.commandTypes.map(function (t) {
+      const meta = TYPE_META[t];
+      return '<span class="badge ' + (meta ? meta.badge : "") + '">' + Utils.escapeHtml(t) + "</span>";
+    }).join("");
+  }
+
+  function renderLegend() {
+    const wrap = Utils.byId("analyzerLegend");
+    if (!wrap) return;
+    wrap.innerHTML = Object.keys(TYPE_META).map(function (t) {
+      const meta = TYPE_META[t];
+      return (
+        '<div class="analyzer-legend-card">' +
+          '<span class="badge ' + meta.badge + '">' + Utils.escapeHtml(t) + "</span>" +
+          "<p>" + Utils.escapeHtml(meta.def) + "</p>" +
+        "</div>"
+      );
+    }).join("");
+  }
+
+  function render() {
+    const out = Utils.byId("analyzerOutput");
+    if (!out) return;
+    const spl = Utils.byId("analyzerInput").value;
+    if (!spl.trim()) {
+      out.innerHTML =
+        '<div class="empty-state" style="padding:30px 20px;">' +
+          '<h3>Paste a search above</h3>' +
+          '<p>Each pipeline stage will be broken out with its command type and where distributed execution ends.</p>' +
+        "</div>";
+      return;
+    }
+
+    const stages = PipelineAnalyser.analyse(spl);
+    const firstCentralIdx = stages.findIndex(function (s) { return s.executionClass === "centralized"; });
+    const unknownCount = stages.filter(function (s) { return s.executionClass === "unknown"; }).length;
+
+    let note;
+    if (firstCentralIdx === -1) {
+      note = "No stage here forces search-head-only processing — as far as command type goes, this pipeline can run fully distributed across the indexers.";
+    } else {
+      const trigger = stages[firstCentralIdx];
+      note = "Stage " + trigger.stage + " (<code>" + Utils.escapeHtml(trigger.command) + "</code>) is the first command that must run on the search head. " +
+        "Every stage from there on also runs centrally — for better performance, keep filtering/field-extraction commands ahead of it where the logic allows.";
+    }
+    if (unknownCount) {
+      note += " " + unknownCount + " stage" + (unknownCount === 1 ? "" : "s") + " use" + (unknownCount === 1 ? "s" : "") +
+        " a command not yet documented in this library's Commands reference, so " + (unknownCount === 1 ? "its" : "their") + " type couldn't be determined.";
+    }
+
+    const summaryHtml =
+      '<div class="analyzer-summary">' +
+        '<div class="stat"><span class="n">' + stages.length + '</span><span class="l">Stages</span></div>' +
+        '<div class="stat"><span class="n">' + (firstCentralIdx === -1 ? stages.length : firstCentralIdx) + '</span><span class="l">Distributable-only prefix</span></div>' +
+        '<div class="note">' + note + "</div>" +
+      "</div>";
+
+    const stagesHtml = stages.map(function (st, idx) {
+      return (
+        '<div class="pipeline-stage">' +
+          '<div class="pipeline-stage-head">' +
+            '<span class="pipeline-stage-num">' + st.stage + "</span>" +
+            '<span class="pipeline-stage-cmd">' + Utils.escapeHtml(st.command) + "</span>" +
+            '<span class="badge" style="margin-left:auto;">' + (EXEC_CLASS_LABEL[st.executionClass] || "") + "</span>" +
+            (st.flagged ? '<span class="pipeline-stage-perf badge badge-warning">Perf. sensitive</span>' : "") +
+          "</div>" +
+          '<div class="pipeline-stage-code">' + SyntaxHighlighter.highlight(st.spl) + "</div>" +
+          '<div class="analyzer-stage-types">' + stageTypeBadges(st) + "</div>" +
+          '<div class="pipeline-stage-desc">' + Utils.escapeHtml(st.description) + "</div>" +
+          (st.commandTypeNotes ? '<div class="analyzer-stage-notes">' + Utils.escapeHtml(st.commandTypeNotes) + "</div>" : "") +
+          (idx === firstCentralIdx ? '<div class="analyzer-exec-marker">↳ First stage requiring search-head-only execution — everything below also runs centrally.</div>' : "") +
+        "</div>"
+      );
+    }).join("");
+
+    out.innerHTML = summaryHtml + stagesHtml;
+  }
+
+  function init() {
+    const ta = Utils.byId("analyzerInput");
+    if (!ta) return;
+    ta.addEventListener("input", Utils.debounce(render, 150));
+    Utils.byId("btnAnalyzerExample").addEventListener("click", function () { ta.value = EXAMPLE_SPL; render(); });
+    Utils.byId("btnAnalyzerClear").addEventListener("click", function () { ta.value = ""; render(); });
+    renderLegend();
+    render();
+  }
+
+  return { init: init };
+})();
+
+/* ---------------------------------------------------------------------- *
  * CommandReferencePage
  * ---------------------------------------------------------------------- */
 const CommandReferencePage = (function () {
@@ -5120,6 +5353,7 @@ const AppController = (function () {
     RegexLibraryPage.init();
     SplunkCliPage.init();
     SplBuilder.init();
+    AnalyzerPage.init();
 
     // Custom entries load from IndexedDB asynchronously; everything that
     // reads the library (search, filters, first render) waits for this.
